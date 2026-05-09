@@ -1,5 +1,21 @@
 import "./style.css";
+import L from "leaflet";
 import { createMap } from "./map";
+import {
+  addTransitLayers,
+  loadTransitData,
+  uniqueLineCodes,
+} from "./transit";
+import { buildGraph, type TransitGraph } from "./graph";
+import { findRoute } from "./router";
+import { renderRoute } from "./route-render";
+import { setupLineInspector } from "./line-inspector";
+import { setupPlanPanel } from "./plan-panel";
+import {
+  loadDisruptions,
+  renderDisruptions,
+  type DisruptionLayer,
+} from "./disruptions";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
@@ -20,122 +36,79 @@ app.innerHTML = `
       </div>
     </header>
 
-    <section class="absolute inset-x-0 bottom-0 z-10 px-4 pb-4 sm:inset-y-0 sm:right-auto sm:left-6 sm:flex sm:items-center sm:px-0 sm:pb-0">
-      <div class="mx-auto w-full max-w-md sm:mx-0 sm:w-[380px]">
-        <div class="rounded-2xl bg-white/95 p-4 shadow-xl ring-1 ring-black/5 backdrop-blur">
-          <div class="mb-3">
-            <h1 class="text-lg font-semibold tracking-tight text-slate-900">Plan your route</h1>
-            <p class="text-xs text-slate-500">Metro & İETT bus directions across Istanbul.</p>
-          </div>
+    <!-- Plan panel container -->
+    <section id="plan-panel-root" class="absolute inset-x-0 bottom-0 z-10 px-4 pb-4 sm:inset-y-0 sm:right-auto sm:left-6 sm:flex sm:items-center sm:px-0 sm:pb-0"></section>
 
-          <form id="route-form" class="space-y-2">
-            <div class="relative flex items-stretch gap-2 rounded-xl ring-1 ring-slate-200 focus-within:ring-2 focus-within:ring-sky-500/60">
-              <div class="flex flex-1 flex-col">
-                <label class="flex items-center gap-3 px-3 pt-2 pb-1.5">
-                  <span class="inline-block h-3 w-3 shrink-0 rounded-full bg-emerald-500 ring-4 ring-emerald-500/15"></span>
-                  <input
-                    id="start-input"
-                    name="start"
-                    type="text"
-                    autocomplete="off"
-                    placeholder="Start location"
-                    class="w-full bg-transparent text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none"
-                  />
-                </label>
-                <div class="ml-[26px] border-t border-dashed border-slate-200"></div>
-                <label class="flex items-center gap-3 px-3 pt-1.5 pb-2">
-                  <span class="inline-block h-3 w-3 shrink-0 rounded-sm bg-rose-500 ring-4 ring-rose-500/15"></span>
-                  <input
-                    id="end-input"
-                    name="end"
-                    type="text"
-                    autocomplete="off"
-                    placeholder="Destination"
-                    class="w-full bg-transparent text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none"
-                  />
-                </label>
-              </div>
-              <button
-                id="swap-btn"
-                type="button"
-                aria-label="Swap start and destination"
-                class="my-2 mr-2 inline-flex w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 active:scale-95"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
-                  <path d="M7 3v18"/>
-                  <path d="m3 7 4-4 4 4"/>
-                  <path d="M17 21V3"/>
-                  <path d="m21 17-4 4-4-4"/>
-                </svg>
-              </button>
-            </div>
-
-            <button
-              id="plan-btn"
-              type="submit"
-              class="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-sky-500/60 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
-                <path d="M5 12h14"/>
-                <path d="m13 5 7 7-7 7"/>
-              </svg>
-              Plan route
-            </button>
-          </form>
-
-          <div id="results" class="mt-3 hidden rounded-xl bg-slate-50 p-3 text-xs text-slate-600 ring-1 ring-slate-200">
-          </div>
-        </div>
-
-        <p class="mt-2 text-center text-[11px] text-slate-500 sm:text-left">
-          Powered by OpenStreetMap, Metro İstanbul & İETT (coming soon).
-        </p>
-      </div>
-    </section>
+    <!-- Legend container -->
+    <aside id="legend-root" class="pointer-events-auto absolute right-4 top-4 z-10 hidden max-w-[200px] rounded-xl bg-white/95 p-3 text-xs shadow-lg ring-1 ring-black/5 backdrop-blur sm:block"></aside>
   </div>
 `;
 
 const mapContainer = document.querySelector<HTMLDivElement>("#map")!;
-createMap(mapContainer);
+const map = createMap(mapContainer);
 
-const form = document.querySelector<HTMLFormElement>("#route-form")!;
-const startInput = document.querySelector<HTMLInputElement>("#start-input")!;
-const endInput = document.querySelector<HTMLInputElement>("#end-input")!;
-const swapBtn = document.querySelector<HTMLButtonElement>("#swap-btn")!;
-const results = document.querySelector<HTMLDivElement>("#results")!;
+// --- Shared state (owned by main.ts, injected into sub-modules) --------------
 
-swapBtn.addEventListener("click", () => {
-  const tmp = startInput.value;
-  startInput.value = endInput.value;
-  endInput.value = tmp;
-  startInput.focus();
+let graph: TransitGraph | null = null;
+let linesLayer: L.GeoJSON | null = null;
+let stationsLayer: L.GeoJSON | null = null;
+let disruptionLayer: DisruptionLayer | null = null;
+
+// --- Line inspector ---------------------------------------------------------
+
+const lineInspector = setupLineInspector({
+  container: document.querySelector<HTMLElement>("#legend-root")!,
+  map,
+  getLinesLayer: () => linesLayer,
+  getStationsLayer: () => stationsLayer,
+  getGraph: () => graph,
+  onLineChange: (code) => disruptionLayer?.setVisibleLine(code),
 });
 
-form.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const from = startInput.value.trim();
-  const to = endInput.value.trim();
+// --- Plan panel -------------------------------------------------------------
 
-  if (!from || !to) {
-    results.classList.remove("hidden");
-    results.textContent = "Please enter both a start location and a destination.";
-    return;
-  }
-
-  results.classList.remove("hidden");
-  results.innerHTML = `
-    <div class="font-medium text-slate-800">Route preview</div>
-    <div class="mt-1 truncate"><span class="text-emerald-600">●</span> ${escapeHtml(from)}</div>
-    <div class="truncate"><span class="text-rose-600">■</span> ${escapeHtml(to)}</div>
-    <div class="mt-2 text-slate-500">Routing engine arrives in phase 2.</div>
-  `;
+// Stored for potential destroy/cleanup. Referenced via closure in onLineSelect.
+void setupPlanPanel({
+  container: document.querySelector<HTMLElement>("#plan-panel-root")!,
+  map,
+  planRoute: async (start, end) => {
+    if (!graph) return null;
+    const route = findRoute(graph, start, end);
+    if (!route) return null;
+    return renderRoute(map, graph, route);
+  },
+  onLineSelect: (code) => lineInspector.selectLine(code),
 });
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
+// --- Bootstrap --------------------------------------------------------------
+
+Promise.all([loadTransitData(), loadDisruptions()])
+  .then(([data, disruptions]) => {
+    const layers = addTransitLayers(map, data);
+    linesLayer = layers.lines;
+    stationsLayer = layers.stations;
+    graph = buildGraph(data);
+    lineInspector.setLines(uniqueLineCodes(linesLayer));
+    console.info(
+      `transit graph: ${graph.nodes.size} nodes, ${
+        [...graph.edges.values()].reduce((n, arr) => n + arr.length, 0) / 2
+      } edges`
+    );
+
+    if (disruptions.length) {
+      disruptionLayer = renderDisruptions(map, graph, disruptions);
+      const badges = new Map(
+        [...disruptionLayer.countsByLine].map(([code, count]) => [
+          code,
+          { count, severity: disruptionLayer!.severityByLine.get(code)! },
+        ])
+      );
+      lineInspector.setDisruptionBadges(badges);
+      console.info(
+        `disruptions: ${disruptions.length} active across ${disruptionLayer.countsByLine.size} line(s)`
+      );
+    }
+  })
+  .catch((err) => {
+    console.error("failed to load transit data", err);
+  });

@@ -36,3 +36,6 @@ Thumbs.db
 coverage
 .cache
 .tmp
+
+# Synced transit data (regenerated via `npm run sync:data`)
+public/data/
