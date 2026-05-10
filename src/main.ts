@@ -185,11 +185,19 @@ function showRouteLeg(
 
 // --- Line inspector (rail filter only — no DOM) ----------------------------
 
+// Track the most-recently selected rail line so we can replay that selection
+// onto the disruption layer once it finishes loading (the API is async and
+// often arrives after the user has already clicked a line).
+let activeRailLine: string | null = null;
+
 const lineInspector = setupLineInspector({
   map,
   getLinesLayer: () => linesLayer,
   getGraph: () => graph,
-  onLineChange: (code) => disruptionLayer?.setVisibleLine(code),
+  onLineChange: (code) => {
+    activeRailLine = code;
+    disruptionLayer?.setVisibleLine(code);
+  },
 });
 
 // --- Routing UI: editor vs read-only viewer --------------------------------
@@ -341,7 +349,9 @@ Promise.all([
     void disruptionsPromise.then((disruptions) => {
       if (!disruptions.length || !graph) return;
       disruptionLayer = renderDisruptions(map, graph, disruptions);
-      disruptionLayer.setVisibleLine(null);
+      // Restore whatever line the user has already selected — otherwise an
+      // early click would leave the overlay invisible until they re-select.
+      disruptionLayer.setVisibleLine(activeRailLine);
     });
 
     searchBar.refresh();

@@ -86,40 +86,60 @@ interface MetroApiResponse<T> {
 /**
  * Fetch live service disruptions from the Metro İstanbul API. Returns an
  * empty list on any error so the rest of the app keeps working.
+ *
+ * The IBB gateway is genuinely slow — first response often takes 8–12s — so
+ * we use a generous timeout, and on timeout we retry once before giving up.
+ * The whole call runs in the background and never blocks app startup, so
+ * being patient here costs us nothing.
  */
 export async function loadDisruptions(): Promise<Disruption[]> {
-  // Hard-cap how long we wait for the Metro İstanbul API. The endpoint
-  // occasionally hangs without a response, and we don't want to block app
-  // startup or routing on it.
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5000);
+  const attempt = async (timeoutMs: number) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(SERVICE_STATUS_URL, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        console.warn(`disruptions API returned HTTP ${res.status}`);
+        return null;
+      }
+      return (await res.json()) as MetroApiResponse<MetroServiceStatusItem>;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  let body: MetroApiResponse<MetroServiceStatusItem> | null = null;
   try {
-    const res = await fetch(SERVICE_STATUS_URL, {
-      headers: { Accept: "application/json" },
-      // Defeat any aggressive intermediary caches; data is small.
-      cache: "no-store",
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      console.warn(`disruptions API returned HTTP ${res.status}`);
+    body = await attempt(15_000);
+  } catch (err) {
+    console.warn("disruptions: first attempt failed, retrying", err);
+    try {
+      body = await attempt(20_000);
+    } catch (err2) {
+      console.warn("disruptions: retry failed, giving up", err2);
       return [];
     }
-    const body = (await res.json()) as MetroApiResponse<MetroServiceStatusItem>;
-    if (!body.Success || !Array.isArray(body.Data)) return [];
-    return body.Data
-      .filter((item) => item.IsActive && item.Description?.trim())
-      .map(adaptServiceStatus);
-  } catch (err) {
-    console.warn("failed to fetch live disruptions", err);
-    return [];
-  } finally {
-    clearTimeout(timer);
   }
+
+  if (!body || !body.Success || !Array.isArray(body.Data)) return [];
+  const adapted = body.Data
+    .filter((item) => item.IsActive && item.Description?.trim())
+    .map(adaptServiceStatus);
+  if (adapted.length) {
+    console.info(
+      `disruptions loaded: ${adapted.length} active · lines: ${[...new Set(adapted.map((d) => d.lineCode))].join(", ")}`
+    );
+  }
+  return adapted;
 }
 
 function adaptServiceStatus(item: MetroServiceStatusItem): Disruption {
   const description = item.Description.trim();
-  const lineCode = (item.LineName || "").toUpperCase().trim();
+  const lineCode = normalizeLineCode(item.LineName || "");
   const type = inferType(description);
   const severity = inferSeverity(description, type);
   return {
@@ -134,6 +154,24 @@ function adaptServiceStatus(item: MetroServiceStatusItem): Disruption {
     startTime: normalizeTime(item.UpdateDate),
     endTime: null,
   };
+}
+
+/**
+ * Pull a canonical line code (matching what we use in our own data) out of
+ * whatever string the Metro İstanbul API gives us in `LineName`. Real-world
+ * values seen include "M7", "M7 Hattı", "Marmaray", "T1 Bağcılar-Kabataş", …
+ * Without this, "M7 Hattı".toUpperCase() doesn't match our "M7" key and the
+ * disruption silently never lights up on the map.
+ */
+function normalizeLineCode(raw: string): string {
+  const s = raw.trim();
+  if (!s) return "";
+  const m = s.match(/^(M\d{1,2}[AB]?|T\d{1,2}|F\d{1,2}|Marmaray)\b/i);
+  if (!m) return s;
+  const token = m[1];
+  // Our rail data uses "Marmaray" (mixed case), not "MARMARAY".
+  if (token.toLowerCase() === "marmaray") return "Marmaray";
+  return token.toUpperCase();
 }
 
 function normalizeTime(s: string | null | undefined): string | null {
