@@ -10,18 +10,31 @@ import { spawn } from "node:child_process";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const dataDir = resolve(__dirname, "..", "public", "data");
 const required = ["stations.geojson", "lines.geojson", "headways.json"];
+const busIndex = resolve(dataDir, "bus", "index.json");
 
 const missing = required.filter((f) => !existsSync(resolve(dataDir, f)));
-if (missing.length === 0) {
+const missingBus = !existsSync(busIndex);
+
+if (missing.length === 0 && !missingBus) {
   process.exit(0);
 }
 
-console.log(`transit data missing (${missing.join(", ")}) — syncing…`);
+if (missing.length) {
+  console.log(`transit data missing (${missing.join(", ")}) — syncing…`);
+}
+if (missingBus) {
+  console.log("bus data missing — syncing IETT routes…");
+}
 
 async function run() {
-  await spawnSync("sync-transit-data.mjs");
-  if (missing.includes("headways.json")) {
-    await spawnSync("sync-gtfs.mjs");
+  if (missing.length) {
+    await spawnSync("sync-transit-data.mjs");
+    if (missing.includes("headways.json")) {
+      await spawnSync("sync-gtfs.mjs");
+    }
+  }
+  if (missingBus) {
+    await spawnSync("sync-bus-data.mjs");
   }
   process.exit(0);
 }

@@ -6,6 +6,7 @@
   "scripts": {
     "sync:data": "node scripts/sync-transit-data.mjs",
     "sync:gtfs": "node scripts/sync-gtfs.mjs",
+    "sync:bus": "node scripts/sync-bus-data.mjs",
     "predev": "node scripts/ensure-data.mjs",
     "prebuild": "node scripts/ensure-data.mjs",
     "dev": "vite",
