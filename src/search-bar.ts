@@ -7,6 +7,7 @@
 
 import { colorForLine } from "./transit";
 import type { BusIndexEntry } from "./bus";
+import { t } from "./i18n";
 
 export type RailItem = { kind: "rail"; code: string; name: string };
 export type BusItem = { kind: "bus"; entry: BusIndexEntry };
@@ -39,8 +40,8 @@ export function setupSearchBar({
   container.innerHTML = `
     <div class="pointer-events-auto w-full max-w-md">
       <div id="searchbar-shell" class="relative">
-        <div class="flex items-center gap-2 rounded-full bg-white/95 pl-4 pr-2 py-2 shadow-lg ring-1 ring-black/5 backdrop-blur focus-within:ring-2 focus-within:ring-sky-500/60">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 shrink-0 text-slate-400">
+        <div class="flex items-center gap-2 rounded-full bg-white/95 pl-4 pr-2 py-2 shadow-lg ring-1 ring-black/5 backdrop-blur focus-within:ring-2 focus-within:ring-sky-500/60 dark:bg-slate-800/95 dark:ring-white/10">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 shrink-0 text-slate-400 dark:text-slate-500">
             <circle cx="11" cy="11" r="7"/>
             <path d="m21 21-4.3-4.3"/>
           </svg>
@@ -49,14 +50,14 @@ export function setupSearchBar({
             type="text"
             autocomplete="off"
             spellcheck="false"
-            placeholder="Search bus or metro line…"
-            class="flex-1 bg-transparent text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none"
+            placeholder="${t("search.placeholder")}"
+            class="flex-1 bg-transparent text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none dark:text-slate-100 dark:placeholder:text-slate-500"
           />
           <button
             id="searchbar-clear"
             type="button"
-            class="hidden inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-            aria-label="Clear"
+            class="hidden inline-flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+            aria-label="${t("search.clear")}"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
               <path d="M18 6 6 18"/>
@@ -64,7 +65,7 @@ export function setupSearchBar({
             </svg>
           </button>
         </div>
-        <div id="searchbar-dropdown" class="absolute left-0 right-0 top-[calc(100%+6px)] z-20 hidden max-h-[60vh] overflow-y-auto rounded-2xl bg-white/98 shadow-xl ring-1 ring-black/5 backdrop-blur"></div>
+        <div id="searchbar-dropdown" class="absolute left-0 right-0 top-[calc(100%+6px)] z-20 hidden max-h-[60vh] overflow-y-auto rounded-2xl bg-white/98 shadow-xl ring-1 ring-black/5 backdrop-blur dark:bg-slate-800/98 dark:ring-white/10"></div>
       </div>
     </div>
   `;
@@ -136,7 +137,7 @@ export function setupSearchBar({
 
     if (!results.length) {
       dropdown.innerHTML = `
-        <div class="px-4 py-3 text-xs text-slate-500">No matching lines.</div>
+        <div class="px-4 py-3 text-xs text-slate-500">${t("search.noMatches")}</div>
       `;
     } else {
       const html: string[] = [];
@@ -173,20 +174,20 @@ export function setupSearchBar({
       const color = colorForLine(item.code);
       return `
         <button data-idx="${idx}" type="button"
-                class="search-row flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-slate-100">
+                class="search-row flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-700">
           <span class="inline-flex h-7 min-w-[44px] items-center justify-center rounded-md px-2 text-xs font-bold text-white" style="background:${color}">${escapeHtml(item.code)}</span>
-          <span class="flex-1 truncate text-slate-700">${escapeHtml(item.name)}</span>
-          <span class="text-[10px] uppercase tracking-wide text-slate-400">Rail</span>
+          <span class="flex-1 truncate text-slate-700 dark:text-slate-200">${escapeHtml(item.name)}</span>
+          <span class="text-[10px] uppercase tracking-wide text-slate-400">${t("search.tag.rail")}</span>
         </button>
       `;
     }
     const e = item.entry;
     return `
       <button data-idx="${idx}" type="button"
-              class="search-row flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-slate-100">
+              class="search-row flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-700">
         <span class="inline-flex h-7 min-w-[44px] items-center justify-center rounded-md bg-orange-500 px-2 text-xs font-bold text-white">${escapeHtml(e.code)}</span>
-        <span class="flex-1 truncate text-slate-700">${escapeHtml(e.longName)}</span>
-        <span class="text-[10px] uppercase tracking-wide text-slate-400">Bus</span>
+        <span class="flex-1 truncate text-slate-700 dark:text-slate-200">${escapeHtml(e.longName)}</span>
+        <span class="text-[10px] uppercase tracking-wide text-slate-400">${t("search.tag.bus")}</span>
       </button>
     `;
   }
@@ -195,9 +196,9 @@ export function setupSearchBar({
     dropdown.querySelectorAll<HTMLElement>("[data-idx]").forEach((el) => {
       const idx = Number(el.dataset.idx);
       if (idx === activeIndex) {
-        el.classList.add("bg-slate-100");
+        el.classList.add("bg-slate-100", "dark:bg-slate-700");
       } else {
-        el.classList.remove("bg-slate-100");
+        el.classList.remove("bg-slate-100", "dark:bg-slate-700");
       }
     });
   }

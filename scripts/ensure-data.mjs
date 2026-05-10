@@ -10,10 +10,10 @@ import { spawn } from "node:child_process";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const dataDir = resolve(__dirname, "..", "public", "data");
 const required = ["stations.geojson", "lines.geojson", "headways.json"];
-const busIndex = resolve(dataDir, "bus", "index.json");
+const busFiles = ["bus/index.json", "bus/segments.json"];
 
 const missing = required.filter((f) => !existsSync(resolve(dataDir, f)));
-const missingBus = !existsSync(busIndex);
+const missingBus = busFiles.some((f) => !existsSync(resolve(dataDir, f)));
 
 if (missing.length === 0 && !missingBus) {
   process.exit(0);

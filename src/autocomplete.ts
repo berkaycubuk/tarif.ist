@@ -1,4 +1,5 @@
 import { searchPlaces, type Place } from "./geocode";
+import { t } from "./i18n";
 
 export interface AutocompleteController {
   destroy(): void;
@@ -25,7 +26,7 @@ export function setupAutocomplete({
 }: AutocompleteOptions): AutocompleteController {
   const dropdown = document.createElement("div");
   dropdown.className =
-    "absolute left-0 right-0 top-full z-30 mt-1 hidden max-h-64 overflow-auto rounded-xl bg-white text-sm shadow-xl ring-1 ring-black/10";
+    "absolute left-0 right-0 top-full z-30 mt-1 hidden max-h-64 overflow-auto rounded-xl bg-white text-sm shadow-xl ring-1 ring-black/10 dark:bg-slate-800 dark:ring-white/10";
   dropdown.setAttribute("role", "listbox");
   anchor.appendChild(dropdown);
 
@@ -45,19 +46,19 @@ export function setupAutocomplete({
   }
   function setLoading() {
     dropdown.innerHTML = `
-      <div class="px-3 py-2 text-xs text-slate-500">Searching…</div>
+      <div class="px-3 py-2 text-xs text-slate-500">${t("auto.searching")}</div>
     `;
     open();
   }
   function setEmpty() {
     dropdown.innerHTML = `
-      <div class="px-3 py-2 text-xs text-slate-500">No matches in Istanbul.</div>
+      <div class="px-3 py-2 text-xs text-slate-500">${t("auto.noMatches")}</div>
     `;
     open();
   }
   function setError() {
     dropdown.innerHTML = `
-      <div class="px-3 py-2 text-xs text-rose-600">Search failed. Try again.</div>
+      <div class="px-3 py-2 text-xs text-rose-600">${t("auto.error")}</div>
     `;
     open();
   }
@@ -76,10 +77,10 @@ export function setupAutocomplete({
             type="button"
             role="option"
             data-index="${i}"
-            class="block w-full cursor-pointer px-3 py-2 text-left transition hover:bg-sky-50 aria-selected:bg-sky-100"
+            class="block w-full cursor-pointer px-3 py-2 text-left transition hover:bg-sky-50 aria-selected:bg-sky-100 dark:hover:bg-slate-700 dark:aria-selected:bg-sky-900/40"
           >
-            <div class="truncate font-medium text-slate-800">${escapeHtml(p.name)}</div>
-            <div class="truncate text-[11px] text-slate-500">${escapeHtml(p.fullName)}</div>
+            <div class="truncate font-medium text-slate-800 dark:text-slate-100">${escapeHtml(p.name)}</div>
+            <div class="truncate text-[11px] text-slate-500 dark:text-slate-400">${escapeHtml(p.fullName)}</div>
           </button>
         `
       )

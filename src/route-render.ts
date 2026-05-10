@@ -8,10 +8,18 @@
 import L from "leaflet";
 import { getLineGeometry } from "./graph";
 import type { TransitGraph } from "./graph";
-import { sliceLine } from "./geo";
-import type { RailLeg, Route, RouteLeg, TransferLeg, WalkLeg } from "./router";
+import { haversineMeters, sliceLine } from "./geo";
+import type {
+  BusLeg,
+  RailLeg,
+  Route,
+  RouteLeg,
+  TransferLeg,
+  WalkLeg,
+} from "./router";
 import { colorForLine } from "./transit";
 import { getFootRoute, type FootRoute } from "./walk-routing";
+import { t } from "./i18n";
 
 export interface RenderedRoute {
   layer: L.LayerGroup;
@@ -77,6 +85,8 @@ export async function renderRoute(
     const foot = footRoutes[i];
     if (leg.kind === "rail") {
       drawRailLeg(layer, graph, leg);
+    } else if (leg.kind === "bus") {
+      drawBusLeg(layer, leg);
     } else if (leg.kind === "transfer") {
       drawTransferLeg(layer, leg, foot);
     } else {
@@ -89,7 +99,7 @@ export async function renderRoute(
   // Fit map to the full route
   const bounds = L.latLngBounds([]);
   for (const leg of enriched.legs) {
-    if (leg.kind === "rail") {
+    if (leg.kind === "rail" || leg.kind === "bus") {
       for (const s of leg.stations) bounds.extend([s.lat, s.lng]);
     } else {
       bounds.extend(leg.fromLatLng);
@@ -140,12 +150,35 @@ function drawRailLeg(
 
   let coords: L.LatLngExpression[];
   if (geom && stations.length >= 2) {
-    const slice = sliceLine(
-      geom,
-      stations[0].cumDistOnLine,
-      stations[stations.length - 1].cumDistOnLine
+    // Slice piecewise between consecutive stations. Doing it in one shot
+    // (start→end of leg) misbehaves when the line geometry is a chained
+    // MultiLineString and some intermediate station projects to a cum value
+    // inside an unrelated branch — the slice then overshoots all the way to
+    // a terminus. Per-segment slicing isolates that error to a single hop,
+    // and the remaining segments are still curve-faithful.
+    const lineCoords: Array<[number, number]> = [];
+    for (let i = 0; i < stations.length - 1; i++) {
+      const a = stations[i];
+      const b = stations[i + 1];
+      const sub = sliceLine(geom, a.cumDistOnLine, b.cumDistOnLine);
+      // Defensive: if a single-segment slice strays absurdly far from the
+      // straight-line distance between the two stations, the cum values are
+      // wrong; fall back to straight for this hop.
+      const directM = haversineMeters(a.lat, a.lng, b.lat, b.lng);
+      const sliceLengthM = polylineLengthM(sub);
+      const usable = sub.length >= 2 && sliceLengthM <= directM * 4 + 200;
+      const seg: Array<[number, number]> = usable
+        ? sub
+        : [
+            [a.lng, a.lat],
+            [b.lng, b.lat],
+          ];
+      if (lineCoords.length === 0) lineCoords.push(...seg);
+      else lineCoords.push(...seg.slice(1));
+    }
+    coords = lineCoords.map(
+      ([lng, lat]) => [lat, lng] as L.LatLngExpression
     );
-    coords = slice.map(([lng, lat]) => [lat, lng] as L.LatLngExpression);
     if (!coords.length) {
       coords = stations.map((s) => [s.lat, s.lng]);
     }
@@ -170,6 +203,43 @@ function drawRailLeg(
       color: "#ffffff",
       weight: 2.5,
       fillColor: color,
+      fillOpacity: 1,
+    }).addTo(layer);
+  }
+}
+
+function polylineLengthM(coords: Array<[number, number]>): number {
+  let total = 0;
+  for (let i = 1; i < coords.length; i++) {
+    const [ax, ay] = coords[i - 1];
+    const [bx, by] = coords[i];
+    total += haversineMeters(ay, ax, by, bx);
+  }
+  return total;
+}
+
+function drawBusLeg(layer: L.LayerGroup, leg: BusLeg): void {
+  // We don't ship per-route bus shape geometry at boot, so connect the stops
+  // with straight segments. The orange line is the same as the standalone
+  // bus-route view.
+  const stations = leg.stations;
+  if (stations.length < 2) return;
+  const coords = stations.map(
+    (s) => [s.lat, s.lng] as L.LatLngExpression
+  );
+  L.polyline(coords, {
+    color: "#ea580c",
+    weight: 6,
+    opacity: 0.9,
+    lineCap: "round",
+    lineJoin: "round",
+  }).addTo(layer);
+  for (const s of [stations[0], stations[stations.length - 1]]) {
+    L.circleMarker([s.lat, s.lng], {
+      radius: 6,
+      color: "#ffffff",
+      weight: 2.5,
+      fillColor: "#ea580c",
       fillOpacity: 1,
     }).addTo(layer);
   }
@@ -216,15 +286,16 @@ function renderItinerary(route: Route): string {
   const walkKm = (route.totalWalkM / 1000).toFixed(1);
   const transitMin = Math.round((route.totalSec - route.totalWalkM / 1.4) / 60);
 
+  const min = t("itin.minSuffix");
   const summary = `
     <div class="flex items-baseline justify-between">
-      <div class="text-base font-semibold text-slate-900">${totalMin} min</div>
-      <div class="text-[11px] text-slate-500">walk ${walkKm} km${transitMin > 0 ? ` · transit ~${Math.max(0, transitMin)} min` : ""}</div>
+      <div class="text-base font-semibold text-slate-900">${totalMin} ${min}</div>
+      <div class="text-[11px] text-slate-500">${t("itin.walk")} ${walkKm} km${transitMin > 0 ? ` · ${t("itin.transit")} ~${Math.max(0, transitMin)} ${min}` : ""}</div>
     </div>
   `;
 
   const stepsHtml = route.legs
-    .map((leg) => renderLeg(leg))
+    .map((leg, idx) => renderLeg(leg, idx))
     .filter(Boolean)
     .join("");
 
@@ -236,30 +307,35 @@ function renderItinerary(route: Route): string {
   `;
 }
 
-function renderLeg(leg: RouteLeg): string {
-  const min = Math.max(1, Math.round(leg.durationSec / 60));
+function renderLeg(leg: RouteLeg, idx: number): string {
+  const minN = Math.max(1, Math.round(leg.durationSec / 60));
+  const minLabel = t("itin.minSuffix");
 
   if (leg.kind === "walk") {
     if (leg.role === "direct") {
       return liRow(
         walkIcon(),
-        `Walk ${(leg.distM / 1000).toFixed(1)} km`,
-        `${min} min`,
+        t("itin.leg.walkKm", { km: (leg.distM / 1000).toFixed(1) }),
+        `${minN} ${minLabel}`,
         "bg-slate-100 text-slate-700"
       );
     }
     if (leg.role === "origin") {
       return liRow(
         walkIcon(),
-        `Walk to <strong>${escapeHtml(leg.toName ?? "station")}</strong>`,
-        `${Math.round(leg.distM)} m · ${min} min`,
+        t("itin.leg.walkTo", {
+          place: escapeHtml(leg.toName ?? t("itin.fallback.station")),
+        }),
+        `${Math.round(leg.distM)} m · ${minN} ${minLabel}`,
         "bg-slate-100 text-slate-700"
       );
     }
     return liRow(
       walkIcon(),
-      `Walk to destination${leg.fromName ? ` from <strong>${escapeHtml(leg.fromName)}</strong>` : ""}`,
-      `${Math.round(leg.distM)} m · ${min} min`,
+      leg.fromName
+        ? t("itin.leg.walkDestFrom", { place: escapeHtml(leg.fromName) })
+        : t("itin.leg.walkDest"),
+      `${Math.round(leg.distM)} m · ${minN} ${minLabel}`,
       "bg-slate-100 text-slate-700"
     );
   }
@@ -267,26 +343,28 @@ function renderLeg(leg: RouteLeg): string {
   if (leg.kind === "transfer") {
     return liRow(
       transferIcon(),
-      `Transfer at <strong>${escapeHtml(leg.fromName)}</strong>${
+      `${t("itin.leg.transfer", { place: escapeHtml(leg.fromName) })}${
         leg.fromLineCode && leg.toLineCode
           ? ` <span class="text-[10px] text-slate-500">(${escapeHtml(leg.fromLineCode)} → ${escapeHtml(leg.toLineCode)})</span>`
           : ""
       }`,
-      `${Math.round(leg.distM)} m · ${min} min`,
+      `${Math.round(leg.distM)} m · ${minN} ${minLabel}`,
       "bg-amber-50 text-amber-800"
     );
   }
 
-  // rail
+  // rail or bus
   const stops = Math.max(1, leg.stations.length - 1);
-  const color = colorForLine(leg.lineCode);
+  const stopWord = stops === 1 ? t("itin.leg.stop") : t("itin.leg.stops");
+  const color = leg.kind === "bus" ? "#ea580c" : colorForLine(leg.lineCode);
+  const dataKind = leg.kind; // "rail" | "bus"
   const badge = `
-    <span data-line-code="${escapeHtml(leg.lineCode)}" style="background:${color};color:#fff;cursor:pointer" class="inline-flex h-5 min-w-[26px] items-center justify-center rounded-md px-1.5 text-[10px] font-bold tracking-tight hover:ring-2 hover:ring-offset-1 hover:ring-sky-400 transition">${escapeHtml(leg.lineCode)}</span>
+    <span data-line-code="${escapeHtml(leg.lineCode)}" data-line-kind="${dataKind}" data-leg-index="${idx}" style="background:${color};color:#fff;cursor:pointer" class="inline-flex h-5 min-w-[26px] items-center justify-center rounded-md px-1.5 text-[10px] font-bold tracking-tight hover:ring-2 hover:ring-offset-1 hover:ring-sky-400 transition">${escapeHtml(leg.lineCode)}</span>
   `;
   return liRow(
     badge,
     `<strong>${escapeHtml(leg.fromName)}</strong> → <strong>${escapeHtml(leg.toName)}</strong>`,
-    `${stops} stop${stops === 1 ? "" : "s"} · ${min} min`,
+    `${stops} ${stopWord} · ${minN} ${minLabel}`,
     ""
   );
 }

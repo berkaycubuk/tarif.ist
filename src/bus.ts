@@ -22,11 +22,20 @@ interface BusFeatureProps {
 
 type BusRouteFC = FeatureCollection<Geometry, BusFeatureProps>;
 
+export interface BusRouteHandle {
+  /** Stop IDs served by the route, in the order they appear in the GeoJSON. */
+  stopIds: Set<string>;
+}
+
 export interface BusController {
   /** Searchable index — empty until `loadIndex` resolves. */
   getIndex(): BusIndexEntry[];
-  /** Render the given bus route on the map (replaces any prior render). */
-  show(entry: BusIndexEntry): Promise<void>;
+  /**
+   * Render the given bus route on the map (replaces any prior render).
+   * Returns the route's stop IDs so callers can highlight them on the
+   * global stops layer; resolves to null if the route file is missing.
+   */
+  show(entry: BusIndexEntry): Promise<BusRouteHandle | null>;
   /** Remove any rendered bus route. */
   clear(): void;
 }
@@ -66,38 +75,45 @@ export async function setupBus(map: L.Map): Promise<BusController> {
     }
   }
 
-  async function show(entry: BusIndexEntry): Promise<void> {
+  async function show(entry: BusIndexEntry): Promise<BusRouteHandle | null> {
     const data = await fetchRoute(entry.file);
     clear();
-    if (!data) return;
+    if (!data) return null;
 
     const group = L.layerGroup();
     const bounds = L.latLngBounds([]);
+    const stopIds = new Set<string>();
 
-    // The global bus stop layer already shows every stop; this view only
-    // adds the route shape on top.
+    // The global bus stop layer renders the actual stop markers; this view
+    // adds only the route shape and reports the route's stop set so the
+    // caller can filter the global layer down to those stops.
     for (const f of data.features) {
       const geom = f.geometry;
       const props = f.properties;
       if (!geom) continue;
-      if (geom.type !== "LineString" || props.kind !== "shape") continue;
 
-      const latlngs = geom.coordinates.map(
-        ([lon, lat]) => [lat, lon] as [number, number]
-      );
-      const line = L.polyline(latlngs, {
-        color: BUS_COLOR,
-        weight: 5,
-        opacity: 0.9,
-        lineCap: "round",
-        lineJoin: "round",
-      });
-      line.bindTooltip(
-        `<strong>${escapeHtml(entry.code)}</strong> · ${escapeHtml(entry.longName)}`,
-        { sticky: true, direction: "top", opacity: 0.95 }
-      );
-      line.addTo(group);
-      latlngs.forEach((p) => bounds.extend(p));
+      if (geom.type === "LineString" && props.kind === "shape") {
+        const latlngs = geom.coordinates.map(
+          ([lon, lat]) => [lat, lon] as [number, number]
+        );
+        const line = L.polyline(latlngs, {
+          color: BUS_COLOR,
+          weight: 5,
+          opacity: 0.9,
+          lineCap: "round",
+          lineJoin: "round",
+        });
+        line.bindTooltip(
+          `<strong>${escapeHtml(entry.code)}</strong> · ${escapeHtml(entry.longName)}`,
+          { sticky: true, direction: "top", opacity: 0.95 }
+        );
+        line.addTo(group);
+        latlngs.forEach((p) => bounds.extend(p));
+      } else if (geom.type === "Point" && props.kind === "stop" && props.stopId) {
+        stopIds.add(props.stopId);
+        const [lon, lat] = geom.coordinates as [number, number];
+        bounds.extend([lat, lon]);
+      }
     }
 
     group.addTo(map);
@@ -106,6 +122,8 @@ export async function setupBus(map: L.Map): Promise<BusController> {
     if (bounds.isValid()) {
       map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
     }
+
+    return { stopIds };
   }
 
   return {
@@ -146,6 +164,10 @@ interface BusStopRecord {
 }
 
 export interface BusStopsLayer {
+  /** Show only stops in this set; pass null to show every stop. */
+  setStopFilter(stopIds: ReadonlySet<string> | null): void;
+  /** Hide the entire layer regardless of filter (rail line selection). */
+  setHidden(hidden: boolean): void;
   destroy(): void;
 }
 
@@ -184,19 +206,33 @@ export async function setupBusStopsLayer(
   const icon = busStopIcon();
   const group = L.layerGroup().addTo(map);
   const mounted = new Map<string, L.Marker>();
-
+  let stopFilter: ReadonlySet<string> | null = null;
+  let hidden = false;
+  // When a route is selected we want every one of its stops on screen, even
+  // far below MIN_BUS_STOP_ZOOM and outside the current viewport. Skipping
+  // both gates lets selection trump the perf heuristics that exist for the
+  // unfiltered case.
   function refresh(): void {
-    if (map.getZoom() < MIN_BUS_STOP_ZOOM) {
+    if (hidden) {
       if (mounted.size) {
         group.clearLayers();
         mounted.clear();
       }
       return;
     }
-    const bounds = map.getBounds();
+    const filtered = stopFilter !== null;
+    if (!filtered && map.getZoom() < MIN_BUS_STOP_ZOOM) {
+      if (mounted.size) {
+        group.clearLayers();
+        mounted.clear();
+      }
+      return;
+    }
+    const bounds = filtered ? null : map.getBounds();
     const wanted = new Set<string>();
     for (const s of stops) {
-      if (!bounds.contains([s.lat, s.lon])) continue;
+      if (stopFilter && !stopFilter.has(s.id)) continue;
+      if (bounds && !bounds.contains([s.lat, s.lon])) continue;
       wanted.add(s.id);
       if (mounted.has(s.id)) continue;
       const marker = L.marker([s.lat, s.lon], { icon, keyboard: false });
@@ -224,6 +260,14 @@ export async function setupBusStopsLayer(
   map.on("moveend", refresh);
 
   return {
+    setStopFilter(set) {
+      stopFilter = set;
+      refresh();
+    },
+    setHidden(h) {
+      hidden = h;
+      refresh();
+    },
     destroy() {
       map.off("moveend", refresh);
       group.clearLayers();

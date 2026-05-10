@@ -7,6 +7,7 @@ import type {
   Point,
 } from "geojson";
 import trainIconUrl from "./assets/train.svg";
+import tramIconUrl from "./assets/tram.svg";
 
 export interface StationProps {
   name: string;
@@ -73,10 +74,30 @@ export function colorForLine(code: string | null | undefined): string {
   return LINE_COLORS[code.toUpperCase()] ?? FALLBACK_COLOR;
 }
 
+export interface RailStationsLayer {
+  /** Show only stations on this line code; pass null to show every station. */
+  setLineFilter(code: string | null): void;
+  /**
+   * Show only stations whose `${lineCode}|${name}` key is in this set. Takes
+   * precedence over the line filter — used when an itinerary leg wants to
+   * highlight just the stations it actually visits.
+   */
+  setStationKeyFilter(keys: Set<string> | null): void;
+  /** Hide the entire layer regardless of filter (used when a bus line is selected). */
+  setHidden(hidden: boolean): void;
+  destroy(): void;
+}
+
+function railStationKey(lineCode: string | null, name: string): string {
+  return `${lineCode ?? ""}|${name}`;
+}
+
+export { railStationKey };
+
 export function addTransitLayers(
   map: L.Map,
   data: TransitData
-): { lines: L.GeoJSON; stations: L.GeoJSON } {
+): { lines: L.GeoJSON; stations: RailStationsLayer } {
   const lines = L.geoJSON(data.lines, {
     style: (feature) => {
       const props = feature?.properties as LineProps | undefined;
@@ -99,45 +120,89 @@ export function addTransitLayers(
       });
     },
   });
-
-  const stations = L.geoJSON(data.stations, {
-    pointToLayer: (_feature, latlng) =>
-      L.marker(latlng, {
-        icon: trainStationIcon(),
-        keyboard: false,
-      }),
-    onEachFeature: (feature, layer) => {
-      const p = feature.properties as StationProps;
-      const code = p.lineCode ?? "—";
-      const color = colorForLine(p.lineCode);
-      layer.bindPopup(`
-        <div style="min-width:160px">
-          <div style="font-weight:600;font-size:13px;color:#0f172a;margin-bottom:4px">${escapeHtml(p.name)}</div>
-          <div style="display:inline-flex;align-items:center;gap:6px;font-size:11px">
-            <span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:${color}"></span>
-            <span style="font-weight:600;color:${color}">${escapeHtml(code)}</span>
-            <span style="color:#64748b">${escapeHtml(p.kind ?? "")}</span>
-          </div>
-          <div style="font-size:11px;color:#64748b;margin-top:4px">${escapeHtml(p.lineName)}</div>
-        </div>
-      `);
-    },
-  });
-
   lines.addTo(map);
 
-  // Stations only render at street-level zoom — at city overview the colored
-  // pips cluster into noise.
+  // Build station markers manually so we can add/remove them by line code
+  // when the user selects a specific line.
+  const trainIcon = trainStationIcon(trainIconUrl);
+  const tramIcon = trainStationIcon(tramIconUrl);
+  const records: Array<{ marker: L.Marker; props: StationProps }> = [];
+  for (const f of data.stations.features) {
+    if (f.geometry?.type !== "Point") continue;
+    const [lng, lat] = f.geometry.coordinates as [number, number];
+    const props = f.properties;
+    const code = props.lineCode ?? "—";
+    const color = colorForLine(props.lineCode);
+    const icon = isTramCode(props.lineCode) ? tramIcon : trainIcon;
+    const marker = L.marker([lat, lng], { icon, keyboard: false });
+    marker.bindPopup(`
+      <div style="min-width:160px">
+        <div style="font-weight:600;font-size:13px;color:#0f172a;margin-bottom:4px">${escapeHtml(props.name)}</div>
+        <div style="display:inline-flex;align-items:center;gap:6px;font-size:11px">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:${color}"></span>
+          <span style="font-weight:600;color:${color}">${escapeHtml(code)}</span>
+          <span style="color:#64748b">${escapeHtml(props.kind ?? "")}</span>
+        </div>
+        <div style="font-size:11px;color:#64748b;margin-top:4px">${escapeHtml(props.lineName)}</div>
+      </div>
+    `);
+    records.push({ marker, props });
+  }
+
+  const group = L.layerGroup();
+  // Stations only render at street-level zoom — at city overview the dots
+  // cluster into noise.
   const MIN_STATION_ZOOM = 12;
-  function syncStationVisibility(): void {
-    if (map.getZoom() >= MIN_STATION_ZOOM) {
-      if (!map.hasLayer(stations)) stations.addTo(map);
-    } else if (map.hasLayer(stations)) {
-      map.removeLayer(stations);
+  let lineFilter: string | null = null;
+  let stationKeyFilter: Set<string> | null = null;
+  let hidden = false;
+
+  function wantsMarker(props: StationProps): boolean {
+    if (stationKeyFilter)
+      return stationKeyFilter.has(railStationKey(props.lineCode, props.name));
+    return lineFilter === null || props.lineCode === lineFilter;
+  }
+
+  function sync(): void {
+    // Per-leg highlights bypass the zoom gate: when the user picks a leg from
+    // the itinerary we want every involved station on screen regardless of
+    // zoom.
+    const ignoreZoomGate = stationKeyFilter !== null;
+    const wantGroup =
+      !hidden && (ignoreZoomGate || map.getZoom() >= MIN_STATION_ZOOM);
+    if (!wantGroup) {
+      if (map.hasLayer(group)) map.removeLayer(group);
+      return;
+    }
+    if (!map.hasLayer(group)) group.addTo(map);
+    for (const { marker, props } of records) {
+      const want = wantsMarker(props);
+      if (want && !group.hasLayer(marker)) group.addLayer(marker);
+      else if (!want && group.hasLayer(marker)) group.removeLayer(marker);
     }
   }
-  syncStationVisibility();
-  map.on("zoomend", syncStationVisibility);
+  sync();
+  map.on("zoomend", sync);
+
+  const stations: RailStationsLayer = {
+    setLineFilter(code) {
+      lineFilter = code;
+      sync();
+    },
+    setStationKeyFilter(keys) {
+      stationKeyFilter = keys;
+      sync();
+    },
+    setHidden(h) {
+      hidden = h;
+      sync();
+    },
+    destroy() {
+      map.off("zoomend", sync);
+      group.clearLayers();
+      if (map.hasLayer(group)) map.removeLayer(group);
+    },
+  };
 
   return { lines, stations };
 }
@@ -159,22 +224,30 @@ export function uniqueLineCodes(linesLayer: L.GeoJSON): string[] {
   });
 }
 
-function trainStationIcon(): L.DivIcon {
+function trainStationIcon(iconUrl: string): L.DivIcon {
   // Tailwind preflight applies `img { max-width: 100%; height: auto }`, which
-  // beats <img>'s width/height attributes (the source SVG is 800×800). The
+  // beats <img>'s width/height attributes (the source SVGs are 800×800). The
   // `!important` on the inline style locks the size we actually want.
   const html = `<span style="
     display:flex;align-items:center;justify-content:center;
     width:18px;height:18px;border-radius:50%;
     background:#fff;
     box-shadow:0 1px 2px rgba(15,23,42,0.35);
-  "><img src="${trainIconUrl}" alt="" style="width:14px !important;height:14px !important;display:block;max-width:none;"/></span>`;
+  "><img src="${iconUrl}" alt="" style="width:14px !important;height:14px !important;display:block;max-width:none;"/></span>`;
   return L.divIcon({
     className: "rail-station-icon",
     html,
     iconSize: [18, 18],
     iconAnchor: [9, 9],
   });
+}
+
+function isTramCode(code: string | null | undefined): boolean {
+  // T1/T2/T3/T4/T5 are the IETT tram lines; "T" by itself is treated as
+  // tram too. Marmaray and metro/funicular codes (M*, F*, MARMARAY) all use
+  // the train icon.
+  if (!code) return false;
+  return /^T\d/i.test(code);
 }
 
 function escapeHtml(s: string): string {

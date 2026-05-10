@@ -88,11 +88,17 @@ interface MetroApiResponse<T> {
  * empty list on any error so the rest of the app keeps working.
  */
 export async function loadDisruptions(): Promise<Disruption[]> {
+  // Hard-cap how long we wait for the Metro İstanbul API. The endpoint
+  // occasionally hangs without a response, and we don't want to block app
+  // startup or routing on it.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
   try {
     const res = await fetch(SERVICE_STATUS_URL, {
       headers: { Accept: "application/json" },
       // Defeat any aggressive intermediary caches; data is small.
       cache: "no-store",
+      signal: controller.signal,
     });
     if (!res.ok) {
       console.warn(`disruptions API returned HTTP ${res.status}`);
@@ -106,6 +112,8 @@ export async function loadDisruptions(): Promise<Disruption[]> {
   } catch (err) {
     console.warn("failed to fetch live disruptions", err);
     return [];
+  } finally {
+    clearTimeout(timer);
   }
 }
 

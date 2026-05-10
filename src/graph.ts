@@ -46,11 +46,24 @@ const TRANSFER_DIST_M = 300;
 const TRANSFER_HEADWAY_SEC = 90; // half of typical 3-min headway
 const WALK_SPEED_MPS = 1.4;
 
+// IETT buses run at ~15 km/h average in Istanbul traffic (slower than rail
+// even on bus-only lanes). Headways vary but are typically much wider than
+// rail, so the per-edge dwell is small but transfers TO a bus pay a bigger
+// headway penalty.
+const BUS_SPEED_MPS = 4.2;
+const BUS_DWELL_SEC = 20;
+/** Avg wait time when transferring onto a bus (typical headway ~10 min). */
+const BUS_TRANSFER_HEADWAY_SEC = 300;
+
 // --- Types ------------------------------------------------------------------
+
+export type NodeMode = "rail" | "bus";
 
 export interface StationNode {
   id: string;
+  mode: NodeMode;
   stationName: string;
+  /** Rail station's line code; bus stop's empty string (a stop serves many routes). */
   lineCode: string;
   kind: string | null;
   lat: number;
@@ -59,7 +72,7 @@ export interface StationNode {
   cumDistOnLine: number;
 }
 
-export type EdgeKind = "rail" | "transfer";
+export type EdgeKind = "rail" | "bus" | "transfer";
 
 export interface Edge {
   to: string;
@@ -232,6 +245,7 @@ function buildLineNodes(
 
   return annotated.map((a, i) => ({
     id: `${code}#${i}`,
+    mode: "rail" as const,
     stationName: a.f.properties.name,
     lineCode: code,
     kind: a.f.properties.kind,
@@ -282,9 +296,146 @@ function addTransferEdges(
   }
 }
 
+// --- Bus integration --------------------------------------------------------
+
+export interface BusSegmentData {
+  /** stopId → { lat, lng, name } */
+  stops: Record<string, { lat: number; lng: number; name: string }>;
+  /** ordered stop sequence per route */
+  routes: Array<{ code: string; longName: string; stops: string[] }>;
+}
+
+function busNodeId(stopId: string): string {
+  return `bus#${stopId}`;
+}
+
+/** Add a node for every stop *referenced by some route* and an edge for every
+ *  consecutive pair in each route's stop sequence. */
+function addBusNodesAndEdges(
+  nodes: Map<string, StationNode>,
+  edges: Map<string, Edge[]>,
+  byLine: Map<string, StationNode[]>,
+  data: BusSegmentData
+): void {
+  const referenced = new Set<string>();
+  for (const route of data.routes) {
+    for (const id of route.stops) referenced.add(id);
+  }
+  for (const stopId of referenced) {
+    const s = data.stops[stopId];
+    if (!s) continue;
+    const id = busNodeId(stopId);
+    nodes.set(id, {
+      id,
+      mode: "bus",
+      stationName: s.name,
+      lineCode: "",
+      kind: "Bus",
+      lat: s.lat,
+      lng: s.lng,
+      cumDistOnLine: 0,
+    });
+    edges.set(id, []);
+  }
+
+  for (const route of data.routes) {
+    const lineNodes: StationNode[] = [];
+    for (const id of route.stops) {
+      const node = nodes.get(busNodeId(id));
+      if (node) lineNodes.push(node);
+    }
+    if (lineNodes.length >= 2) byLine.set(route.code, lineNodes);
+
+    for (let i = 1; i < route.stops.length; i++) {
+      const a = nodes.get(busNodeId(route.stops[i - 1]));
+      const b = nodes.get(busNodeId(route.stops[i]));
+      if (!a || !b) continue;
+      const distM = haversineMeters(a.lat, a.lng, b.lat, b.lng);
+      const weightSec = distM / BUS_SPEED_MPS + BUS_DWELL_SEC;
+      edges.get(a.id)!.push({
+        to: b.id,
+        weightSec,
+        kind: "bus",
+        lineCode: route.code,
+        distM,
+      });
+      edges.get(b.id)!.push({
+        to: a.id,
+        weightSec,
+        kind: "bus",
+        lineCode: route.code,
+        distM,
+      });
+    }
+  }
+}
+
+/** Add walking-transfer edges between rail and bus nodes within range, using
+ *  a coarse grid index so the cost stays manageable (rail ~600, bus ~11k). */
+function addRailBusTransferEdges(
+  nodes: Map<string, StationNode>,
+  edges: Map<string, Edge[]>
+): void {
+  // 0.005° ≈ 555m at Istanbul's latitude — large enough that any rail node's
+  // 300m neighborhood is fully covered by its own cell + the 8 around it.
+  const CELL = 0.005;
+  const cellKey = (lat: number, lng: number) =>
+    `${Math.floor(lat / CELL)}|${Math.floor(lng / CELL)}`;
+
+  const bins = new Map<string, StationNode[]>();
+  for (const n of nodes.values()) {
+    if (n.mode !== "bus") continue;
+    const key = cellKey(n.lat, n.lng);
+    let arr = bins.get(key);
+    if (!arr) {
+      arr = [];
+      bins.set(key, arr);
+    }
+    arr.push(n);
+  }
+
+  for (const rail of nodes.values()) {
+    if (rail.mode !== "bus") {
+      // rail node — search the 9 cells around it for nearby bus stops
+    } else {
+      continue;
+    }
+    const baseLat = Math.floor(rail.lat / CELL);
+    const baseLng = Math.floor(rail.lng / CELL);
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const arr = bins.get(`${baseLat + dy}|${baseLng + dx}`);
+        if (!arr) continue;
+        for (const bus of arr) {
+          const d = haversineMeters(rail.lat, rail.lng, bus.lat, bus.lng);
+          if (d > TRANSFER_DIST_M) continue;
+          const walkSec = d / WALK_SPEED_MPS;
+          // Asymmetric: transferring TO a bus pays the bigger headway,
+          // arriving at rail uses the regular rail headway.
+          edges.get(rail.id)!.push({
+            to: bus.id,
+            weightSec: walkSec + BUS_TRANSFER_HEADWAY_SEC,
+            kind: "transfer",
+            distM: d,
+          });
+          edges.get(bus.id)!.push({
+            to: rail.id,
+            weightSec: walkSec + TRANSFER_HEADWAY_SEC,
+            kind: "transfer",
+            distM: d,
+          });
+        }
+      }
+    }
+  }
+}
+
 // --- Main entry point -------------------------------------------------------
 
-export function buildGraph(data: TransitData): TransitGraph {
+export function buildGraph(
+  data: TransitData,
+  busData?: BusSegmentData | null
+): TransitGraph {
   const stationsByLine = groupStationsByLine(data.stations.features);
   const lineFeatureByCode = indexLinesByCode(data.lines.features);
 
@@ -306,6 +457,11 @@ export function buildGraph(data: TransitData): TransitGraph {
   }
 
   addTransferEdges(nodes, edges);
+
+  if (busData) {
+    addBusNodesAndEdges(nodes, edges, byLine, busData);
+    addRailBusTransferEdges(nodes, edges);
+  }
 
   return { nodes, edges, byLine, lineGeometry };
 }

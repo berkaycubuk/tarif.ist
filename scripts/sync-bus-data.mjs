@@ -435,6 +435,11 @@ async function main() {
   // without having to load all per-route files.
   const allStops = new Map();
 
+  // Per-route stop sequence (longest direction wins). Written out as
+  // bus/segments.json — the routing graph needs ordered stop lists at boot,
+  // and loading every per-route GeoJSON would mean ~70 MB of fetches.
+  const routeSequences = new Map(); // code -> string[] (stopIds)
+
   // Iterate over all unique line codes (union of GTFS and shapes).
   const allCodes = new Set([...tripsByCode.keys(), ...shapesByCode.keys()]);
 
@@ -494,6 +499,7 @@ async function main() {
       arr.push(t);
     }
     const seen = new Set();
+    let longestDirSequence = [];
     for (const [dir, dirTrips] of tripsByDir) {
       let bestTrip = null;
       let bestLen = 0;
@@ -506,6 +512,8 @@ async function main() {
       }
       if (!bestTrip) continue;
       const sts = stopTimesByTrip.get(bestTrip.trip_id) ?? [];
+      const dirSequence = [];
+      let prevSeqStop = null;
       for (const [, stopId] of sts) {
         const stop = stopMap.get(stopId);
         if (!stop) continue;
@@ -514,6 +522,12 @@ async function main() {
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
         // Sanity-check the parse landed in/near Istanbul.
         if (lat < 40 || lat > 42 || lon < 27 || lon > 30) continue;
+
+        if (stopId !== prevSeqStop) {
+          dirSequence.push(stopId);
+          prevSeqStop = stopId;
+        }
+
         const key = `${stopId}|${dir}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -535,6 +549,12 @@ async function main() {
         }
         agg.lines.add(code);
       }
+      if (dirSequence.length > longestDirSequence.length) {
+        longestDirSequence = dirSequence;
+      }
+    }
+    if (longestDirSequence.length >= 2) {
+      routeSequences.set(code, longestDirSequence);
     }
 
     if (!features.length) continue;
@@ -594,6 +614,27 @@ async function main() {
   const stopsFC = { type: "FeatureCollection", features: stopFeatures };
   await writeFile(resolve(OUT_DIR, "stops.geojson"), JSON.stringify(stopsFC));
   console.log(`✓ wrote ${stopFeatures.length} unique bus stops → stops.geojson`);
+
+  // Compact segments file for the routing graph: every stop's coordinates +
+  // ordered stop sequences per route. Loaded once at boot to wire bus stops
+  // and bus edges into the transit graph.
+  const segStops = {};
+  for (const [stopId, agg] of allStops) {
+    segStops[stopId] = { lat: agg.lat, lng: agg.lng, name: agg.name };
+  }
+  const segRoutes = [];
+  for (const entry of index) {
+    const seq = routeSequences.get(entry.code);
+    if (!seq || seq.length < 2) continue;
+    segRoutes.push({ code: entry.code, longName: entry.longName, stops: seq });
+  }
+  await writeFile(
+    resolve(OUT_DIR, "segments.json"),
+    JSON.stringify({ stops: segStops, routes: segRoutes })
+  );
+  console.log(
+    `✓ wrote ${segRoutes.length} route sequences → segments.json`
+  );
 }
 
 function fixRow(obj) {

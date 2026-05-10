@@ -12,6 +12,10 @@ const NEAREST_K = 6;
 const MAX_DIRECT_WALK_M = 2500;
 /** One-time cost of stepping onto a transit line (typical wait). */
 const BOARDING_PENALTY_SEC = 180;
+/** Bigger when boarding a bus — IETT headways average 8–12 min. */
+const BUS_BOARDING_PENALTY_SEC = 360;
+/** Penalty paid when switching from one bus route to another at a shared stop. */
+const BUS_TRANSFER_HEADWAY_SEC = 300;
 
 export const VIRTUAL_SRC = "__SRC__";
 export const VIRTUAL_DST = "__DST__";
@@ -21,7 +25,7 @@ export interface QueryPoint {
   lng: number;
 }
 
-export type StepKind = "walk" | "rail" | "transfer";
+export type StepKind = "walk" | "rail" | "bus" | "transfer";
 
 export interface RailLeg {
   kind: "rail";
@@ -29,6 +33,17 @@ export interface RailLeg {
   fromName: string;
   toName: string;
   /** ordered station nodes traversed (inclusive of board + alight) */
+  stations: StationNode[];
+  durationSec: number;
+  distM: number;
+}
+
+export interface BusLeg {
+  kind: "bus";
+  lineCode: string;
+  fromName: string;
+  toName: string;
+  /** ordered stop nodes traversed (inclusive of board + alight) */
   stations: StationNode[];
   durationSec: number;
   distM: number;
@@ -60,7 +75,7 @@ export interface WalkLeg {
   distM: number;
 }
 
-export type RouteLeg = RailLeg | TransferLeg | WalkLeg;
+export type RouteLeg = RailLeg | BusLeg | TransferLeg | WalkLeg;
 
 export interface Route {
   legs: RouteLeg[];
@@ -143,8 +158,23 @@ interface VirtualEdge {
 }
 
 interface PrevEntry {
-  from: string;
+  from: string; // state key
+  fromNodeId: string;
   edge: VirtualEdge;
+}
+
+interface TrailEntry {
+  from: string; // node id
+  edge: VirtualEdge;
+}
+
+// State = (nodeId, currentBusLineCode). Tracking the bus line we're on lets
+// us add the boarding penalty when switching bus routes at a shared stop —
+// same-stop line changes are otherwise free, since many bus routes literally
+// share the same stop node. Non-bus edges reset the line to "".
+const NO_LINE = "";
+function stateKey(nodeId: string, busLine: string): string {
+  return `${nodeId}\x01${busLine}`;
 }
 
 export function findRoute(
@@ -168,7 +198,9 @@ export function findRoute(
   // each station that's an end-neighbor.
   const startEdges: VirtualEdge[] = startNeighbors.map((n) => ({
     to: n.node.id,
-    weightSec: n.distM / WALK_SPEED_MPS + BOARDING_PENALTY_SEC,
+    weightSec:
+      n.distM / WALK_SPEED_MPS +
+      (n.node.mode === "bus" ? BUS_BOARDING_PENALTY_SEC : BOARDING_PENALTY_SEC),
     kind: "walk",
     distM: n.distM,
   }));
@@ -188,27 +220,41 @@ export function findRoute(
 
   const dist = new Map<string, number>();
   const prev = new Map<string, PrevEntry>();
-  dist.set(VIRTUAL_SRC, 0);
+  const SRC_STATE = stateKey(VIRTUAL_SRC, NO_LINE);
+  dist.set(SRC_STATE, 0);
 
-  const heap = new MinHeap<{ id: string; dist: number }>(
-    (a, b) => a.dist - b.dist
-  );
-  heap.push({ id: VIRTUAL_SRC, dist: 0 });
+  const heap = new MinHeap<{
+    state: string;
+    nodeId: string;
+    busLine: string;
+    dist: number;
+  }>((a, b) => a.dist - b.dist);
+  heap.push({
+    state: SRC_STATE,
+    nodeId: VIRTUAL_SRC,
+    busLine: NO_LINE,
+    dist: 0,
+  });
+
+  let dstState: string | null = null;
 
   while (heap.size > 0) {
     const cur = heap.pop()!;
-    const known = dist.get(cur.id);
+    const known = dist.get(cur.state);
     if (known !== undefined && cur.dist > known) continue;
-    if (cur.id === VIRTUAL_DST) break;
+    if (cur.nodeId === VIRTUAL_DST) {
+      dstState = cur.state;
+      break;
+    }
 
     const outEdges: VirtualEdge[] = [];
-    if (cur.id === VIRTUAL_SRC) {
+    if (cur.nodeId === VIRTUAL_SRC) {
       outEdges.push(...startEdges);
     } else {
-      for (const e of getEdges(graph, cur.id)) {
+      for (const e of getEdges(graph, cur.nodeId)) {
         outEdges.push(e as VirtualEdge);
       }
-      const walkToDst = endWalkByStation.get(cur.id);
+      const walkToDst = endWalkByStation.get(cur.nodeId);
       if (walkToDst !== undefined) {
         outEdges.push({
           to: VIRTUAL_DST,
@@ -220,26 +266,56 @@ export function findRoute(
     }
 
     for (const e of outEdges) {
-      const next = cur.dist + e.weightSec;
-      const prevBest = dist.get(e.to);
+      let extra = 0;
+      let nextLine: string;
+      if (e.kind === "bus") {
+        nextLine = e.lineCode ?? NO_LINE;
+        // Switching to a different bus route at the same stop costs the same
+        // headway as a transfer-edge bus boarding. Boarding fresh from walk
+        // (busLine = "") doesn't pay it here — the start edge's boarding
+        // penalty already covers it.
+        if (
+          cur.busLine !== NO_LINE &&
+          cur.busLine !== nextLine
+        ) {
+          extra = BUS_TRANSFER_HEADWAY_SEC;
+        }
+      } else {
+        nextLine = NO_LINE;
+      }
+
+      const next = cur.dist + e.weightSec + extra;
+      const nextState = stateKey(e.to, nextLine);
+      const prevBest = dist.get(nextState);
       if (prevBest === undefined || next < prevBest) {
-        dist.set(e.to, next);
-        prev.set(e.to, { from: cur.id, edge: e });
-        heap.push({ id: e.to, dist: next });
+        dist.set(nextState, next);
+        prev.set(nextState, {
+          from: cur.state,
+          fromNodeId: cur.nodeId,
+          edge: e,
+        });
+        heap.push({
+          state: nextState,
+          nodeId: e.to,
+          busLine: nextLine,
+          dist: next,
+        });
       }
     }
   }
 
-  const total = dist.get(VIRTUAL_DST);
+  if (dstState === null) return null;
+  const total = dist.get(dstState);
   if (total === undefined) return null;
 
-  // Reconstruct the path
-  const trail: PrevEntry[] = [];
-  let cursor = VIRTUAL_DST;
-  while (cursor !== VIRTUAL_SRC) {
+  // Reconstruct the path along state keys, but the trail entries only need
+  // the from-node-id and edge — the rest of the pipeline is unchanged.
+  const trail: TrailEntry[] = [];
+  let cursor = dstState;
+  while (cursor !== SRC_STATE) {
     const p = prev.get(cursor);
     if (!p) return null;
-    trail.unshift(p);
+    trail.unshift({ from: p.fromNodeId, edge: p.edge });
     cursor = p.from;
   }
 
@@ -250,7 +326,7 @@ function buildRouteFromTrail(
   graph: TransitGraph,
   start: QueryPoint,
   end: QueryPoint,
-  trail: PrevEntry[],
+  trail: TrailEntry[],
   totalSec: number
 ): Route {
   const legs: RouteLeg[] = [];
@@ -293,7 +369,8 @@ function buildRouteFromTrail(
     const step = trail[i];
     const edge = step.edge;
 
-    if (edge.kind === "rail") {
+    if (edge.kind === "rail" || edge.kind === "bus") {
+      const transitKind = edge.kind;
       const lineCode = edge.lineCode!;
       const startNode = getNode(graph, step.from);
       const stations: StationNode[] = startNode ? [startNode] : [];
@@ -302,7 +379,7 @@ function buildRouteFromTrail(
       let lastTo = edge.to;
       while (
         i < trail.length &&
-        trail[i].edge.kind === "rail" &&
+        trail[i].edge.kind === transitKind &&
         trail[i].edge.lineCode === lineCode
       ) {
         const e = trail[i].edge;
@@ -315,7 +392,7 @@ function buildRouteFromTrail(
       }
       const finalNode = getNode(graph, lastTo);
       legs.push({
-        kind: "rail",
+        kind: transitKind,
         lineCode,
         fromName: stations[0]?.stationName ?? "?",
         toName: finalNode?.stationName ?? stations[stations.length - 1]?.stationName ?? "?",
