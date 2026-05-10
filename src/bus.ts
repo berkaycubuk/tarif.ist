@@ -208,6 +208,11 @@ export async function setupBusStopsLayer(
   const mounted = new Map<string, L.Marker>();
   let stopFilter: ReadonlySet<string> | null = null;
   let hidden = false;
+  // Tracks the filter state of currently-mounted markers so we can drop them
+  // and rebuild when toggling between filtered (permanent labels) and
+  // unfiltered (hover only) — tooltip permanence is set at bind time, not
+  // toggleable in place.
+  let mountedFiltered = false;
   // When a route is selected we want every one of its stops on screen, even
   // far below MIN_BUS_STOP_ZOOM and outside the current viewport. Skipping
   // both gates lets selection trump the perf heuristics that exist for the
@@ -221,6 +226,11 @@ export async function setupBusStopsLayer(
       return;
     }
     const filtered = stopFilter !== null;
+    if (filtered !== mountedFiltered && mounted.size) {
+      group.clearLayers();
+      mounted.clear();
+    }
+    mountedFiltered = filtered;
     if (!filtered && map.getZoom() < MIN_BUS_STOP_ZOOM) {
       if (mounted.size) {
         group.clearLayers();
@@ -236,7 +246,18 @@ export async function setupBusStopsLayer(
       wanted.add(s.id);
       if (mounted.has(s.id)) continue;
       const marker = L.marker([s.lat, s.lon], { icon, keyboard: false });
-      if (s.name || s.lines.length) {
+      // When a bus route is the focus (filter active), show every stop name
+      // as an always-on label. Without a filter, hover-only — there are
+      // ~40k stops and permanent labels would carpet the map.
+      if (filtered && s.name) {
+        marker.bindTooltip(s.name, {
+          permanent: true,
+          direction: "top",
+          offset: [0, -8],
+          className: "station-label",
+          opacity: 1,
+        });
+      } else if (s.name || s.lines.length) {
         marker.bindTooltip(
           `<strong>${escapeHtml(s.name)}</strong>${
             s.lines.length

@@ -135,6 +135,7 @@ export function addTransitLayers(
     const color = colorForLine(props.lineCode);
     const icon = isTramCode(props.lineCode) ? tramIcon : trainIcon;
     const marker = L.marker([lat, lng], { icon, keyboard: false });
+    bindStationLabel(marker, props.name, false);
     marker.bindPopup(`
       <div style="min-width:160px">
         <div style="font-weight:600;font-size:13px;color:#0f172a;margin-bottom:4px">${escapeHtml(props.name)}</div>
@@ -156,6 +157,19 @@ export function addTransitLayers(
   let lineFilter: string | null = null;
   let stationKeyFilter: Set<string> | null = null;
   let hidden = false;
+  // When a single rail line is the focus, every visible station shows its
+  // name as an always-on label. Off in every other state (no selection,
+  // route-leg highlight, hidden).
+  let labelsOn = false;
+
+  function recomputeLabels(): void {
+    const next = lineFilter !== null;
+    if (next === labelsOn) return;
+    labelsOn = next;
+    for (const { marker, props } of records) {
+      bindStationLabel(marker, props.name, labelsOn);
+    }
+  }
 
   function wantsMarker(props: StationProps): boolean {
     if (stationKeyFilter)
@@ -187,6 +201,7 @@ export function addTransitLayers(
   const stations: RailStationsLayer = {
     setLineFilter(code) {
       lineFilter = code;
+      recomputeLabels();
       sync();
     },
     setStationKeyFilter(keys) {
@@ -239,6 +254,26 @@ function trainStationIcon(iconUrl: string): L.DivIcon {
     html,
     iconSize: [18, 18],
     iconAnchor: [9, 9],
+  });
+}
+
+/**
+ * Toggle an always-on station name label. Permanent tooltips have to be
+ * re-bound to switch their `permanent` flag — Leaflet doesn't react to
+ * mutating the option in place — so we unbind and rebind every time.
+ */
+function bindStationLabel(
+  marker: L.Marker,
+  name: string,
+  permanent: boolean
+): void {
+  marker.unbindTooltip();
+  marker.bindTooltip(name, {
+    permanent,
+    direction: "top",
+    offset: [0, -10],
+    className: "station-label",
+    opacity: 1,
   });
 }
 
