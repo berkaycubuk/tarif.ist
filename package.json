@@ -1,7 +1,31 @@
 {
-  "name": "tarif-ist",
+  "name": "tarifist",
+  "version": "0.1.0",
   "private": true,
-  "version": "0.0.0",
+  "description": "Open-source transit directions for Istanbul — rail, metro, and bus routing on a single map.",
+  "license": "MIT",
+  "author": {
+    "name": "Berkay Çubuk",
+    "url": "https://berkaycubuk.com"
+  },
+  "homepage": "https://tarif.ist",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/berkaycubuk/tarif.ist.git"
+  },
+  "bugs": {
+    "url": "https://github.com/berkaycubuk/tarif.ist/issues"
+  },
+  "keywords": [
+    "istanbul",
+    "transit",
+    "routing",
+    "metro",
+    "iett",
+    "openstreetmap",
+    "leaflet",
+    "gtfs"
+  ],
   "type": "module",
   "scripts": {
     "sync:data": "node scripts/sync-transit-data.mjs",
