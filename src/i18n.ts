@@ -93,6 +93,11 @@ const dict = {
     tr: "Harita: OpenStreetMap & CARTO",
     en: "Map: OpenStreetMap & CARTO",
   },
+  "plan.footer.builtBy": { tr: "Geliştiren", en: "Built by" },
+  "plan.footer.reportIssue": {
+    tr: "Hata bildir / öneri",
+    en: "Report an issue",
+  },
 
   // --- Settings modal -------------------------------------------------------
   "settings.open": { tr: "Ayarlar", en: "Settings" },

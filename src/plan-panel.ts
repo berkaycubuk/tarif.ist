@@ -145,6 +145,10 @@ export function setupPlanPanel({
       <p class="mt-2 text-center text-[11px] text-slate-500 sm:text-left dark:text-slate-500">
         ${t("plan.footer.transitData")}: <a href="https://data.ibb.gov.tr" target="_blank" rel="noreferrer" class="underline hover:text-slate-700">İBB Açık Veri Portalı</a> · ${t("plan.footer.map")}
       </p>
+      <p class="mt-1 text-center text-[11px] text-slate-500 sm:text-left dark:text-slate-500">
+        ${t("plan.footer.builtBy")}: <a href="https://berkaycubuk.com" target="_blank" rel="noreferrer" class="underline hover:text-slate-700">Berkay Çubuk</a>
+        · <a href="https://github.com/berkaycubuk/tarif.ist/issues" target="_blank" rel="noreferrer" class="underline hover:text-slate-700">${t("plan.footer.reportIssue")}</a>
+      </p>
     </div>
   `;
 
