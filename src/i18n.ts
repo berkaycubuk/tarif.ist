@@ -64,6 +64,8 @@ const dict = {
     tr: "Önce başlangıç ve varış seçin.",
     en: "Pick a start and a destination first.",
   },
+  "plan.collapse": { tr: "Paneli küçült", en: "Collapse panel" },
+  "plan.expand": { tr: "Paneli aç", en: "Expand panel" },
 
   // --- Shared route viewer --------------------------------------------------
   "viewer.title": { tr: "Paylaşılan rota", en: "Shared route" },
@@ -98,6 +100,11 @@ const dict = {
     tr: "Hata bildir / öneri",
     en: "Report an issue",
   },
+
+  // --- Info modal -----------------------------------------------------------
+  "info.open": { tr: "Bilgi", en: "Info" },
+  "info.title": { tr: "Hakkında", en: "About" },
+  "info.mapLabel": { tr: "Harita", en: "Map" },
 
   // --- Settings modal -------------------------------------------------------
   "settings.open": { tr: "Ayarlar", en: "Settings" },

@@ -25,8 +25,12 @@ export function setupAutocomplete({
   onClear,
 }: AutocompleteOptions): AutocompleteController {
   const dropdown = document.createElement("div");
+  // On mobile the panel sits at the bottom of the viewport, so a downward-
+  // opening dropdown would sit under (or be clipped by) the soft keyboard.
+  // Default to opening upward; flip to downward on sm+ where the panel is
+  // anchored on the left side and there's room below.
   dropdown.className =
-    "absolute left-0 right-0 top-full z-30 mt-1 hidden max-h-64 overflow-auto rounded-xl bg-white text-sm shadow-xl ring-1 ring-black/10 dark:bg-slate-800 dark:ring-white/10";
+    "absolute left-0 right-0 bottom-full z-30 mb-1 hidden max-h-64 overflow-auto rounded-xl bg-white text-sm shadow-xl ring-1 ring-black/10 sm:bottom-auto sm:top-full sm:mt-1 sm:mb-0 dark:bg-slate-800 dark:ring-white/10";
   dropdown.setAttribute("role", "listbox");
   anchor.appendChild(dropdown);
 

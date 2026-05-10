@@ -62,53 +62,65 @@ export function setupRouteViewer({
   onExit,
 }: RouteViewerOptions): RouteViewer {
   container.innerHTML = `
-    <div class="mx-auto w-full max-w-md sm:mx-0 sm:w-[380px]">
-      <div class="rounded-2xl bg-white/95 p-4 shadow-xl ring-1 ring-black/5 backdrop-blur dark:bg-slate-800/95 dark:ring-white/10">
-        <div class="mb-3 flex items-start justify-between gap-3">
+    <div class="pointer-events-auto mx-auto w-full max-w-md sm:mx-0 sm:w-[380px]">
+      <div class="rounded-2xl bg-white/95 p-3 shadow-xl ring-1 ring-black/5 backdrop-blur sm:p-4 dark:bg-slate-800/95 dark:ring-white/10">
+        <div class="mb-2 flex items-start justify-between gap-2 sm:mb-3 sm:gap-3">
           <div class="min-w-0">
             <div class="text-[10px] font-semibold uppercase tracking-wide text-sky-600 dark:text-sky-400">
               ${t("viewer.title")}
             </div>
-            <h1 class="mt-0.5 text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+            <h1 class="mt-0.5 truncate text-base font-semibold tracking-tight text-slate-900 sm:text-lg dark:text-slate-100">
               <span id="viewer-from-label" class="text-slate-700 dark:text-slate-200">…</span>
               <span class="text-slate-400 dark:text-slate-500"> → </span>
               <span id="viewer-to-label" class="text-slate-700 dark:text-slate-200">…</span>
             </h1>
           </div>
+          <button
+            id="viewer-collapse"
+            type="button"
+            aria-label="${t("plan.collapse")}"
+            class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-700 sm:hidden dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-100"
+          >
+            <svg id="viewer-collapse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 transition-transform">
+              <path d="m6 9 6 6 6-6"/>
+            </svg>
+          </button>
         </div>
 
-        <div class="space-y-1.5 rounded-xl ring-1 ring-slate-200 px-3 py-2 dark:ring-slate-700">
-          <div class="flex items-center gap-2 text-xs">
-            <span class="inline-block h-3 w-3 shrink-0 rounded-full bg-emerald-500 ring-4 ring-emerald-500/15"></span>
-            <span class="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-200" id="viewer-from-line">…</span>
+        <div id="viewer-body" class="space-y-2">
+          <div class="space-y-1.5 rounded-xl ring-1 ring-slate-200 px-3 py-2 dark:ring-slate-700">
+            <div class="flex items-center gap-2 text-xs">
+              <span class="inline-block h-3 w-3 shrink-0 rounded-full bg-emerald-500 ring-4 ring-emerald-500/15"></span>
+              <span class="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-200" id="viewer-from-line">…</span>
+            </div>
+            <div class="flex items-center gap-2 text-xs">
+              <span class="inline-block h-3 w-3 shrink-0 rounded-sm bg-rose-500 ring-4 ring-rose-500/15"></span>
+              <span class="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-200" id="viewer-to-line">…</span>
+            </div>
           </div>
-          <div class="flex items-center gap-2 text-xs">
-            <span class="inline-block h-3 w-3 shrink-0 rounded-sm bg-rose-500 ring-4 ring-rose-500/15"></span>
-            <span class="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-200" id="viewer-to-line">…</span>
+
+          <div id="viewer-results" class="max-h-[42vh] overflow-y-auto rounded-xl bg-slate-50 p-3 text-xs text-slate-600 ring-1 ring-slate-200 sm:max-h-[55vh] dark:bg-slate-900/40 dark:text-slate-300 dark:ring-slate-700">
+            <div class="text-[11px] text-slate-500 dark:text-slate-400">${t("viewer.loading")}</div>
           </div>
-        </div>
 
-        <div id="viewer-results" class="mt-3 rounded-xl bg-slate-50 p-3 text-xs text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900/40 dark:text-slate-300 dark:ring-slate-700">
-          <div class="text-[11px] text-slate-500 dark:text-slate-400">${t("viewer.loading")}</div>
+          <button
+            id="viewer-exit"
+            type="button"
+            class="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+              <path d="M12 5v14"/>
+              <path d="M5 12h14"/>
+            </svg>
+            ${t("viewer.exit")}
+          </button>
         </div>
-
-        <button
-          id="viewer-exit"
-          type="button"
-          class="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
-            <path d="M12 5v14"/>
-            <path d="M5 12h14"/>
-          </svg>
-          ${t("viewer.exit")}
-        </button>
       </div>
 
-      <p class="mt-2 text-center text-[11px] text-slate-500 sm:text-left dark:text-slate-500">
+      <p class="mt-2 hidden text-center text-[11px] text-slate-500 sm:block sm:text-left dark:text-slate-500">
         ${t("plan.footer.transitData")}: <a href="https://data.ibb.gov.tr" target="_blank" rel="noreferrer" class="underline hover:text-slate-700">İBB Açık Veri Portalı</a> · ${t("plan.footer.map")}
       </p>
-      <p class="mt-1 text-center text-[11px] text-slate-500 sm:text-left dark:text-slate-500">
+      <p class="mt-1 hidden text-center text-[11px] text-slate-500 sm:block sm:text-left dark:text-slate-500">
         ${t("plan.footer.builtBy")}: <a href="https://berkaycubuk.com" target="_blank" rel="noreferrer" class="underline hover:text-slate-700">Berkay Çubuk</a>
         · <a href="https://github.com/berkaycubuk/tarif.ist/issues" target="_blank" rel="noreferrer" class="underline hover:text-slate-700">${t("plan.footer.reportIssue")}</a>
       </p>
@@ -121,6 +133,20 @@ export function setupRouteViewer({
   const toLine = container.querySelector<HTMLElement>("#viewer-to-line")!;
   const results = container.querySelector<HTMLElement>("#viewer-results")!;
   const exitBtn = container.querySelector<HTMLButtonElement>("#viewer-exit")!;
+  const collapseBtn = container.querySelector<HTMLButtonElement>("#viewer-collapse")!;
+  const collapseIcon = container.querySelector<SVGElement>("#viewer-collapse-icon")!;
+  const viewerBody = container.querySelector<HTMLDivElement>("#viewer-body")!;
+
+  let collapsed = false;
+  collapseBtn.addEventListener("click", () => {
+    collapsed = !collapsed;
+    viewerBody.classList.toggle("hidden", collapsed);
+    collapseIcon.style.transform = collapsed ? "rotate(180deg)" : "";
+    collapseBtn.setAttribute(
+      "aria-label",
+      collapsed ? t("plan.expand") : t("plan.collapse")
+    );
+  });
 
   const startPlace = placeFromLatLng(start.lat, start.lng, "start");
   const endPlace = placeFromLatLng(end.lat, end.lng, "end");

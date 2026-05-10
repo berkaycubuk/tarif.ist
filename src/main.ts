@@ -38,6 +38,7 @@ import {
 import { t } from "./i18n";
 import "./theme"; // applies dark class on html early
 import { setupSettings } from "./settings-modal";
+import { setupInfo } from "./info-modal";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
@@ -47,7 +48,7 @@ app.innerHTML = `
   <div class="relative h-full w-full overflow-hidden">
     <div id="map" class="absolute inset-0"></div>
 
-    <header class="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-center px-4 pt-4 sm:justify-start sm:pl-6">
+    <header class="pointer-events-none absolute inset-x-0 top-0 z-10 hidden justify-center px-4 pt-4 sm:flex sm:justify-start sm:pl-6">
       <div class="pointer-events-auto flex items-center gap-2 rounded-full bg-white/90 px-4 py-2 shadow-lg ring-1 ring-black/5 backdrop-blur dark:bg-slate-800/90 dark:ring-white/10">
         <span class="inline-flex h-7 w-7 items-center justify-center rounded-full bg-sky-500 text-white">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
@@ -60,15 +61,17 @@ app.innerHTML = `
       </div>
     </header>
 
-    <!-- Top-center search bar -->
-    <div id="search-root" class="pointer-events-none absolute left-1/2 top-16 z-20 flex w-full max-w-md -translate-x-1/2 px-4 sm:top-5"></div>
+    <!-- Top-center search bar. On mobile we leave room for the settings cog
+         on the right via pr-14 so they don't overlap. -->
+    <div id="search-root" class="pointer-events-none absolute inset-x-0 top-3 z-20 flex w-full justify-center px-4 pr-28 sm:left-1/2 sm:right-auto sm:top-5 sm:max-w-md sm:-translate-x-1/2 sm:pr-4"></div>
 
     <!-- Plan panel container -->
-    <section id="plan-panel-root" class="absolute inset-x-0 bottom-0 z-10 px-4 pb-4 sm:inset-y-0 sm:right-auto sm:left-6 sm:flex sm:items-center sm:px-0 sm:pb-0"></section>
+    <section id="plan-panel-root" class="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pb-3 sm:inset-y-0 sm:right-auto sm:left-6 sm:flex sm:items-center sm:px-0 sm:pb-0" style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom));"></section>
   </div>
 `;
 
 setupSettings();
+setupInfo();
 
 const mapContainer = document.querySelector<HTMLDivElement>("#map")!;
 const map = createMap(mapContainer);

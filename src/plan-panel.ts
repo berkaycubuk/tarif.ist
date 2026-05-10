@@ -58,94 +58,106 @@ export function setupPlanPanel({
   // --- DOM ----------------------------------------------------------------
 
   container.innerHTML = `
-    <div class="mx-auto w-full max-w-md sm:mx-0 sm:w-[380px]">
-      <div class="rounded-2xl bg-white/95 p-4 shadow-xl ring-1 ring-black/5 backdrop-blur dark:bg-slate-800/95 dark:ring-white/10">
-        <div class="mb-3 flex items-start justify-between gap-3">
+    <div class="pointer-events-auto mx-auto w-full max-w-md sm:mx-0 sm:w-[380px]">
+      <div id="plan-card" class="rounded-2xl bg-white/95 p-3 shadow-xl ring-1 ring-black/5 backdrop-blur sm:p-4 dark:bg-slate-800/95 dark:ring-white/10">
+        <div class="mb-2 flex items-start justify-between gap-2 sm:mb-3 sm:gap-3">
           <div class="min-w-0">
-            <h1 class="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">${t("plan.heading")}</h1>
-            <p class="text-xs text-slate-500 dark:text-slate-400">${t("plan.hint")}</p>
+            <h1 class="text-base font-semibold tracking-tight text-slate-900 sm:text-lg dark:text-slate-100">${t("plan.heading")}</h1>
+            <p class="hidden text-xs text-slate-500 sm:block dark:text-slate-400">${t("plan.hint")}</p>
           </div>
           <div class="flex shrink-0 items-center gap-1">
             <button
               id="plan-share"
               type="button"
-              class="rounded-md px-2 py-1 text-[11px] font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-100"
+              class="rounded-md px-2 py-1.5 text-xs font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 sm:text-[11px] sm:py-1 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-100"
             >${t("plan.share")}</button>
             <button
               id="plan-clear"
               type="button"
-              class="rounded-md px-2 py-1 text-[11px] font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-100"
+              class="rounded-md px-2 py-1.5 text-xs font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 sm:text-[11px] sm:py-1 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-100"
             >${t("plan.clear")}</button>
-          </div>
-        </div>
-
-        <form id="route-form" class="space-y-2">
-          <div class="flex items-stretch gap-2 rounded-xl ring-1 ring-slate-200 focus-within:ring-2 focus-within:ring-sky-500/60 dark:ring-slate-700">
-            <div class="flex flex-1 flex-col">
-              <div id="start-row" class="relative">
-                <label class="flex items-center gap-3 px-3 pt-2 pb-1.5">
-                  <span class="inline-block h-3 w-3 shrink-0 rounded-full bg-emerald-500 ring-4 ring-emerald-500/15"></span>
-                  <input
-                    id="start-input"
-                    name="start"
-                    type="text"
-                    autocomplete="off"
-                    placeholder="${t("plan.start.placeholder")}"
-                    class="w-full bg-transparent text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none dark:text-slate-100 dark:placeholder:text-slate-500"
-                  />
-                </label>
-              </div>
-              <div class="ml-[26px] border-t border-dashed border-slate-200 dark:border-slate-700"></div>
-              <div id="end-row" class="relative">
-                <label class="flex items-center gap-3 px-3 pt-1.5 pb-2">
-                  <span class="inline-block h-3 w-3 shrink-0 rounded-sm bg-rose-500 ring-4 ring-rose-500/15"></span>
-                  <input
-                    id="end-input"
-                    name="end"
-                    type="text"
-                    autocomplete="off"
-                    placeholder="${t("plan.end.placeholder")}"
-                    class="w-full bg-transparent text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none dark:text-slate-100 dark:placeholder:text-slate-500"
-                  />
-                </label>
-              </div>
-            </div>
             <button
-              id="swap-btn"
+              id="plan-collapse"
               type="button"
-              aria-label="${t("plan.swap")}"
-              class="my-2 mr-2 inline-flex w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-slate-100"
+              aria-label="${t("plan.collapse")}"
+              class="ml-1 inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-700 sm:hidden dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-100"
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
-                <path d="M7 3v18"/>
-                <path d="m3 7 4-4 4 4"/>
-                <path d="M17 21V3"/>
-                <path d="m21 17-4 4-4-4"/>
+              <svg id="plan-collapse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4 transition-transform">
+                <path d="m6 9 6 6 6-6"/>
               </svg>
             </button>
           </div>
+        </div>
 
-          <button
-            id="plan-btn"
-            type="submit"
-            class="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-sky-500/60 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
-              <path d="M5 12h14"/>
-              <path d="m13 5 7 7-7 7"/>
-            </svg>
-            ${t("plan.button")}
-          </button>
-        </form>
+        <div id="plan-body" class="space-y-2">
+          <form id="route-form" class="space-y-2">
+            <div class="flex items-stretch gap-2 rounded-xl ring-1 ring-slate-200 focus-within:ring-2 focus-within:ring-sky-500/60 dark:ring-slate-700">
+              <div class="flex flex-1 flex-col">
+                <div id="start-row" class="relative">
+                  <label class="flex items-center gap-3 px-3 pt-2 pb-1.5">
+                    <span class="inline-block h-3 w-3 shrink-0 rounded-full bg-emerald-500 ring-4 ring-emerald-500/15"></span>
+                    <input
+                      id="start-input"
+                      name="start"
+                      type="text"
+                      autocomplete="off"
+                      placeholder="${t("plan.start.placeholder")}"
+                      class="w-full bg-transparent text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none dark:text-slate-100 dark:placeholder:text-slate-500"
+                    />
+                  </label>
+                </div>
+                <div class="ml-[26px] border-t border-dashed border-slate-200 dark:border-slate-700"></div>
+                <div id="end-row" class="relative">
+                  <label class="flex items-center gap-3 px-3 pt-1.5 pb-2">
+                    <span class="inline-block h-3 w-3 shrink-0 rounded-sm bg-rose-500 ring-4 ring-rose-500/15"></span>
+                    <input
+                      id="end-input"
+                      name="end"
+                      type="text"
+                      autocomplete="off"
+                      placeholder="${t("plan.end.placeholder")}"
+                      class="w-full bg-transparent text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none dark:text-slate-100 dark:placeholder:text-slate-500"
+                    />
+                  </label>
+                </div>
+              </div>
+              <button
+                id="swap-btn"
+                type="button"
+                aria-label="${t("plan.swap")}"
+                class="my-2 mr-2 inline-flex w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-700 active:scale-95 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 dark:hover:text-slate-100"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+                  <path d="M7 3v18"/>
+                  <path d="m3 7 4-4 4 4"/>
+                  <path d="M17 21V3"/>
+                  <path d="m21 17-4 4-4-4"/>
+                </svg>
+              </button>
+            </div>
 
-        <div id="results" class="mt-3 hidden rounded-xl bg-slate-50 p-3 text-xs text-slate-600 ring-1 ring-slate-200 dark:bg-slate-900/40 dark:text-slate-300 dark:ring-slate-700">
+            <button
+              id="plan-btn"
+              type="submit"
+              class="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-sky-500/60 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
+                <path d="M5 12h14"/>
+                <path d="m13 5 7 7-7 7"/>
+              </svg>
+              ${t("plan.button")}
+            </button>
+          </form>
+
+          <div id="results" class="mt-1 hidden max-h-[42vh] overflow-y-auto rounded-xl bg-slate-50 p-3 text-xs text-slate-600 ring-1 ring-slate-200 sm:max-h-[60vh] dark:bg-slate-900/40 dark:text-slate-300 dark:ring-slate-700">
+          </div>
         </div>
       </div>
 
-      <p class="mt-2 text-center text-[11px] text-slate-500 sm:text-left dark:text-slate-500">
+      <p class="mt-2 hidden text-center text-[11px] text-slate-500 sm:block sm:text-left dark:text-slate-500">
         ${t("plan.footer.transitData")}: <a href="https://data.ibb.gov.tr" target="_blank" rel="noreferrer" class="underline hover:text-slate-700">İBB Açık Veri Portalı</a> · ${t("plan.footer.map")}
       </p>
-      <p class="mt-1 text-center text-[11px] text-slate-500 sm:text-left dark:text-slate-500">
+      <p class="mt-1 hidden text-center text-[11px] text-slate-500 sm:block sm:text-left dark:text-slate-500">
         ${t("plan.footer.builtBy")}: <a href="https://berkaycubuk.com" target="_blank" rel="noreferrer" class="underline hover:text-slate-700">Berkay Çubuk</a>
         · <a href="https://github.com/berkaycubuk/tarif.ist/issues" target="_blank" rel="noreferrer" class="underline hover:text-slate-700">${t("plan.footer.reportIssue")}</a>
       </p>
@@ -163,6 +175,22 @@ export function setupPlanPanel({
   const results = container.querySelector<HTMLDivElement>("#results")!;
   const clearBtn = container.querySelector<HTMLButtonElement>("#plan-clear")!;
   const shareBtn = container.querySelector<HTMLButtonElement>("#plan-share")!;
+  const collapseBtn = container.querySelector<HTMLButtonElement>("#plan-collapse")!;
+  const collapseIcon = container.querySelector<SVGElement>("#plan-collapse-icon")!;
+  const planBody = container.querySelector<HTMLDivElement>("#plan-body")!;
+
+  // Collapsed mode hides the form/results so the map shows through; only the
+  // header row stays. Mobile-only: the toggle button is hidden on sm+.
+  let collapsed = false;
+  collapseBtn.addEventListener("click", () => {
+    collapsed = !collapsed;
+    planBody.classList.toggle("hidden", collapsed);
+    collapseIcon.style.transform = collapsed ? "rotate(180deg)" : "";
+    collapseBtn.setAttribute(
+      "aria-label",
+      collapsed ? t("plan.expand") : t("plan.collapse")
+    );
+  });
 
   // --- State ----------------------------------------------------------------
 
