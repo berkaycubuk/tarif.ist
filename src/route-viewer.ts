@@ -24,6 +24,14 @@ export interface RouteViewerOptions {
     kind: "rail" | "bus",
     stationKeys: { id: string; lineCode: string; name: string }[]
   ) => void;
+  /**
+   * Called once the viewer's route has rendered. Same role as in plan-panel:
+   * lets the host filter station/stop layers down to the route.
+   */
+  onRouteShown?: (stations: {
+    rail: { id: string; lineCode: string; name: string }[];
+    bus: { id: string; lineCode: string; name: string }[];
+  }) => void;
   /** Called when the viewer exits (user clicks "Plan your own route"). */
   onExit?: () => void;
 }
@@ -50,6 +58,7 @@ export function setupRouteViewer({
   end,
   planRoute,
   onLegSelect,
+  onRouteShown,
   onExit,
 }: RouteViewerOptions): RouteViewer {
   container.innerHTML = `
@@ -149,6 +158,7 @@ export function setupRouteViewer({
       }
       activeRender = rendered;
       results.innerHTML = rendered.itineraryHtml;
+      onRouteShown?.(gatherRouteStations(rendered));
 
       // Wire badge clicks the same way the editor does.
       if (onLegSelect) {
@@ -191,4 +201,24 @@ export function setupRouteViewer({
       container.innerHTML = "";
     },
   };
+}
+
+function gatherRouteStations(rendered: RenderedRoute): {
+  rail: { id: string; lineCode: string; name: string }[];
+  bus: { id: string; lineCode: string; name: string }[];
+} {
+  const rail: { id: string; lineCode: string; name: string }[] = [];
+  const bus: { id: string; lineCode: string; name: string }[] = [];
+  for (const leg of rendered.route.legs) {
+    if (leg.kind === "rail") {
+      for (const s of leg.stations) {
+        rail.push({ id: s.id, lineCode: s.lineCode, name: s.stationName });
+      }
+    } else if (leg.kind === "bus") {
+      for (const s of leg.stations) {
+        bus.push({ id: s.id, lineCode: s.lineCode, name: s.stationName });
+      }
+    }
+  }
+  return { rail, bus };
 }

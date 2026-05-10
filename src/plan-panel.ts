@@ -27,6 +27,17 @@ export interface PlanPanelOptions {
     kind: "rail" | "bus",
     stationKeys: { id: string; lineCode: string; name: string }[]
   ) => void;
+  /**
+   * Called once a route has been rendered. Host typically uses this to
+   * filter the rail-station and bus-stop layers down to just the stops the
+   * route visits, so the map isn't cluttered with unrelated markers.
+   */
+  onRouteShown?: (stations: {
+    rail: { id: string; lineCode: string; name: string }[];
+    bus: { id: string; lineCode: string; name: string }[];
+  }) => void;
+  /** Called when a previously-shown route is cleared from the map. */
+  onRouteCleared?: () => void;
   /** Called after the user clears the panel (so map filters can reset). */
   onClear?: () => void;
 }
@@ -40,6 +51,8 @@ export function setupPlanPanel({
   map,
   planRoute,
   onLegSelect,
+  onRouteShown,
+  onRouteCleared,
   onClear,
 }: PlanPanelOptions): PlanPanel {
   // --- DOM ----------------------------------------------------------------
@@ -330,6 +343,7 @@ export function setupPlanPanel({
     if (activeRender) {
       map.removeLayer(activeRender.layer);
       activeRender = null;
+      onRouteCleared?.();
     }
   }
 
@@ -375,6 +389,7 @@ export function setupPlanPanel({
       }
       activeRender = rendered;
       results.innerHTML = rendered.itineraryHtml;
+      onRouteShown?.(gatherRouteStations(rendered));
 
       // Wire line badge clicks to per-leg highlighting.
       if (onLegSelect) {
@@ -417,5 +432,25 @@ export function setupPlanPanel({
       container.innerHTML = "";
     },
   };
+}
+
+function gatherRouteStations(rendered: RenderedRoute): {
+  rail: { id: string; lineCode: string; name: string }[];
+  bus: { id: string; lineCode: string; name: string }[];
+} {
+  const rail: { id: string; lineCode: string; name: string }[] = [];
+  const bus: { id: string; lineCode: string; name: string }[] = [];
+  for (const leg of rendered.route.legs) {
+    if (leg.kind === "rail") {
+      for (const s of leg.stations) {
+        rail.push({ id: s.id, lineCode: s.lineCode, name: s.stationName });
+      }
+    } else if (leg.kind === "bus") {
+      for (const s of leg.stations) {
+        bus.push({ id: s.id, lineCode: s.lineCode, name: s.stationName });
+      }
+    }
+  }
+  return { rail, bus };
 }
 

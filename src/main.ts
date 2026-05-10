@@ -124,6 +124,34 @@ function clearSelection(): void {
 }
 
 /**
+ * While a planned route is on the map, hide every station/stop that the
+ * route doesn't visit. The route polyline drawn by route-render is enough
+ * context — the full marker layer underneath is just noise.
+ */
+function showFullRoute(stations: {
+  rail: { id: string; lineCode: string; name: string }[];
+  bus: { id: string; lineCode: string; name: string }[];
+}): void {
+  bus?.clear();
+  lineInspector.selectLine(null);
+
+  const railKeys = new Set(
+    stations.rail.map((s) => railStationKey(s.lineCode, s.name))
+  );
+  railStations?.setLineFilter(null);
+  railStations?.setHidden(false);
+  railStations?.setStationKeyFilter(railKeys);
+
+  const busIds = new Set(
+    stations.bus.map((s) => s.id.replace(/^bus#/, ""))
+  );
+  busStops?.setHidden(false);
+  busStops?.setStopFilter(busIds);
+
+  searchBar.setLabel("");
+}
+
+/**
  * Highlight only the stations/stops actually visited by a single itinerary
  * leg — no full line/route geometry. The route polyline drawn by route-render
  * stays on the map either way.
@@ -189,6 +217,8 @@ if (!sharedRouteParams) {
     onLegSelect: (_code, kind, stationKeys) => {
       showRouteLeg(kind, stationKeys);
     },
+    onRouteShown: (stations) => showFullRoute(stations),
+    onRouteCleared: () => clearSelection(),
     onClear: () => clearSelection(),
   });
 }
@@ -332,6 +362,7 @@ Promise.all([
         onLegSelect: (_code, kind, stationKeys) => {
           showRouteLeg(kind, stationKeys);
         },
+        onRouteShown: (stations) => showFullRoute(stations),
         onExit: () => {
           // Drop the share params and reload into the editable panel.
           location.assign(location.pathname + location.hash);
