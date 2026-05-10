@@ -102,6 +102,10 @@ function selectRailLine(code: string | null): void {
 }
 
 async function selectBusLine(entry: { code: string }, show: () => Promise<{ stopIds: Set<string> } | null>): Promise<void> {
+  // The bus-stops layer is loaded in the background; if a user clicks a bus
+  // line before that finishes, await it so the on-route stop labels actually
+  // appear instead of silently no-op-ing through the optional chains below.
+  await busDataReady;
   // Hide rail entirely while we're focused on a bus route.
   railStations?.setStationKeyFilter(null);
   railStations?.setHidden(true);
@@ -214,6 +218,11 @@ const planRoute = async (
   start: { lat: number; lng: number },
   end: { lat: number; lng: number }
 ) => {
+  // Wait for bus segments to land before planning. The boot only blocks on
+  // rail data, so the first plan attempt can race ahead of the bus graph;
+  // awaiting here keeps bus options on the table instead of silently
+  // serving rail-only routes for the first few seconds.
+  await busDataReady;
   if (!graph) return null;
   const route = findRoute(graph, start, end);
   if (!route) return null;
@@ -325,19 +334,31 @@ const searchBar = setupSearchBar({
 // the whole boot when the Metro İstanbul API hangs.
 const disruptionsPromise = loadDisruptions();
 
-Promise.all([
+// The boot is split into two phases:
+//
+//   1. railReady — rail data + bus index. This is what the user sees and
+//      interacts with on first paint: the map, every rail line and station,
+//      the search bar (rail + bus index entries), and a rail-only routing
+//      graph. Total critical-path bytes: ~500 KB brotli.
+//
+//   2. busDataReady — the heavyweight bus payloads (~720 KB brotli, ~4 MB
+//      decoded, 13.5k stops). These get fetched immediately after railReady
+//      resolves but don't block first paint or the editor panel mounting.
+//      When they arrive, the graph is rebuilt with bus edges folded in and
+//      the always-on bus-stops layer is mounted.
+//
+// Anything that needs the bus-aware graph or the stops layer (planRoute,
+// selectBusLine, share-route decoding) awaits busDataReady.
+const railReady = Promise.all([
   loadTransitData(),
   setupBus(map),
-  setupBusStopsLayer(map),
-  loadBusSegments(),
 ])
-  .then(([data, busCtrl, busStopsCtrl, busSegments]) => {
+  .then(([data, busCtrl]) => {
     const layers = addTransitLayers(map, data);
     linesLayer = layers.lines;
     railStations = layers.stations;
-    graph = buildGraph(data, busSegments);
     bus = busCtrl;
-    busStops = busStopsCtrl;
+    graph = buildGraph(data, null);
 
     // No rail line selected by default — lines stay hidden, stations + bus
     // stops are visible (zoom-gated inside their respective layers).
@@ -358,40 +379,65 @@ Promise.all([
     });
 
     searchBar.refresh();
-
-    if (sharedRouteParams) {
-      const prebuilt = sharedRouteParams.encoded
-        ? tryDecodeShareRoute(sharedRouteParams.encoded, graph)
-        : null;
-      const viewerPlanRoute: typeof planRoute = prebuilt
-        ? async () => renderRoute(map, graph!, prebuilt.route)
-        : planRoute;
-      setupRouteViewer({
-        container: planPanelRoot,
-        map,
-        start: sharedRouteParams.start,
-        end: sharedRouteParams.end,
-        planRoute: viewerPlanRoute,
-        onLegSelect: (_code, kind, stationKeys) => {
-          showRouteLeg(kind, stationKeys);
-        },
-        onRouteShown: (stations) => showFullRoute(stations),
-        onExit: () => {
-          // Drop the share params and reload into the editable panel.
-          location.assign(location.pathname + location.hash);
-        },
-      });
-    }
-
-    console.info(
-      `transit graph: ${graph.nodes.size} nodes · ${
-        [...graph.edges.values()].reduce((n, arr) => n + arr.length, 0) / 2
-      } edges · ${railItems.length} rail lines · ${bus.getIndex().length} bus lines`
-    );
+    return data;
   })
   .catch((err) => {
     console.error("failed to load transit data", err);
+    throw err;
   });
+
+const busDataReady = railReady
+  .then(async (data) => {
+    const [busStopsCtrl, busSegments] = await Promise.all([
+      setupBusStopsLayer(map),
+      loadBusSegments(),
+    ]);
+    busStops = busStopsCtrl;
+    if (busSegments) {
+      // Rebuild the graph so subsequent route plans see bus edges. The
+      // planRoute closure reads `graph` lazily, so this assignment is
+      // enough — no event needed.
+      graph = buildGraph(data, busSegments);
+    }
+    console.info(
+      `transit graph: ${graph!.nodes.size} nodes · ${
+        [...graph!.edges.values()].reduce((n, arr) => n + arr.length, 0) / 2
+      } edges · ${railItems.length} rail lines · ${bus?.getIndex().length ?? 0} bus lines`
+    );
+  })
+  .catch((err) => {
+    // Bus data is degradable — rail-only routing still works without it.
+    console.warn("bus data not available; continuing rail-only", err);
+  });
+
+if (sharedRouteParams) {
+  // Mount the read-only viewer once the bus-aware graph is ready, since a
+  // shared route can include bus legs that need bus nodes for decoding.
+  void busDataReady.then(() => {
+    if (!graph) return;
+    const prebuilt = sharedRouteParams.encoded
+      ? tryDecodeShareRoute(sharedRouteParams.encoded, graph)
+      : null;
+    const viewerPlanRoute: typeof planRoute = prebuilt
+      ? async () => renderRoute(map, graph!, prebuilt.route)
+      : planRoute;
+    setupRouteViewer({
+      container: planPanelRoot,
+      map,
+      start: sharedRouteParams.start,
+      end: sharedRouteParams.end,
+      planRoute: viewerPlanRoute,
+      onLegSelect: (_code, kind, stationKeys) => {
+        showRouteLeg(kind, stationKeys);
+      },
+      onRouteShown: (stations) => showFullRoute(stations),
+      onExit: () => {
+        // Drop the share params and reload into the editable panel.
+        location.assign(location.pathname + location.hash);
+      },
+    });
+  });
+}
 
 async function loadBusSegments(): Promise<BusSegmentData | null> {
   try {
