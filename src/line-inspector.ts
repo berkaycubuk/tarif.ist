@@ -1,6 +1,6 @@
-// Map-only line filter. Highlights one rail line at a time, dimming the rest;
-// passing `null` hides all rail lines/stations entirely (the new default
-// state, since the search bar replaced the legend).
+// Map-only line filter. Highlights one rail line at a time, hiding the rest;
+// passing `null` hides every rail line. Stations stay visible at all times —
+// they're owned by the transit layer, not by this filter.
 
 import L from "leaflet";
 import { colorForLine } from "./transit";
@@ -9,7 +9,6 @@ import { getLineStations, haversineMeters, type TransitGraph } from "./graph";
 export interface LineInspectorOptions {
   map: L.Map;
   getLinesLayer: () => L.GeoJSON | null;
-  getStationsLayer: () => L.GeoJSON | null;
   getGraph: () => TransitGraph | null;
   /** Fires whenever the selected line changes (including null). */
   onLineChange?: (code: string | null) => void;
@@ -26,7 +25,6 @@ export interface LineInspector {
 export function setupLineInspector({
   map,
   getLinesLayer,
-  getStationsLayer,
   getGraph,
   onLineChange,
 }: LineInspectorOptions): LineInspector {
@@ -53,14 +51,16 @@ export function setupLineInspector({
 
   function applyLineFilter(code: string | null): void {
     const linesLayer = getLinesLayer();
-    const stationsLayer = getStationsLayer();
-    if (!linesLayer || !stationsLayer) return;
+    if (!linesLayer) return;
 
-    hideStationLabels();
     stopTrainSimulation();
 
+    // Stations stay visible at all times now — only the line geometry is
+    // shown/hidden by selection.
     if (!code) {
-      hideAllLayers();
+      linesLayer.eachLayer((layer) => {
+        (layer as L.Path).setStyle({ opacity: 0, weight: 0 });
+      });
       return;
     }
 
@@ -74,17 +74,6 @@ export function setupLineInspector({
       }
     });
 
-    stationsLayer.eachLayer((layer) => {
-      const feature = (layer as any).feature;
-      const lineCode = feature?.properties?.lineCode as string | undefined;
-      if (lineCode === code) {
-        (layer as L.CircleMarker).setStyle({ opacity: 1, fillOpacity: 1 });
-      } else {
-        (layer as L.CircleMarker).setStyle({ opacity: 0, fillOpacity: 0 });
-      }
-    });
-
-    showStationLabels(code);
     fitToLine(code);
     startTrainSimulation(code);
   }
@@ -104,45 +93,6 @@ export function setupLineInspector({
     if (bounds.isValid()) {
       map.fitBounds(bounds, { padding: [40, 40], maxZoom: 14 });
     }
-  }
-
-  function showStationLabels(code: string): void {
-    const stationsLayer = getStationsLayer();
-    if (!stationsLayer) return;
-    stationsLayer.eachLayer((layer) => {
-      const cm = layer as L.CircleMarker & { feature?: any };
-      const props = cm.feature?.properties;
-      if (props?.lineCode !== code) return;
-      const name = (props.name ?? "").toString();
-      if (!name) return;
-      cm.bindTooltip(name, {
-        permanent: true,
-        direction: "right",
-        offset: [8, 0],
-        className: "station-label",
-        opacity: 1,
-      });
-    });
-  }
-
-  function hideStationLabels(): void {
-    const stationsLayer = getStationsLayer();
-    if (!stationsLayer) return;
-    stationsLayer.eachLayer((layer) => {
-      const cm = layer as L.CircleMarker;
-      if (cm.getTooltip?.()) cm.unbindTooltip();
-    });
-  }
-
-  function hideAllLayers(): void {
-    const linesLayer = getLinesLayer();
-    const stationsLayer = getStationsLayer();
-    linesLayer?.eachLayer((layer) => {
-      (layer as L.Path).setStyle({ opacity: 0, weight: 0 });
-    });
-    stationsLayer?.eachLayer((layer) => {
-      (layer as L.CircleMarker).setStyle({ opacity: 0, fillOpacity: 0 });
-    });
   }
 
   // --- Train markers (currently disabled; kept for future use) -------------
@@ -289,7 +239,6 @@ export function setupLineInspector({
     current: () => selectedLineCode,
     destroy() {
       stopTrainSimulation();
-      hideStationLabels();
     },
   };
 }

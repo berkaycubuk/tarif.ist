@@ -6,6 +6,7 @@ import type {
   MultiLineString,
   Point,
 } from "geojson";
+import trainIconUrl from "./assets/train.svg";
 
 export interface StationProps {
   name: string;
@@ -100,17 +101,11 @@ export function addTransitLayers(
   });
 
   const stations = L.geoJSON(data.stations, {
-    pointToLayer: (feature, latlng) => {
-      const props = feature.properties as StationProps;
-      const color = colorForLine(props.lineCode);
-      return L.circleMarker(latlng, {
-        radius: 5,
-        color: "#ffffff",
-        weight: 2,
-        fillColor: color,
-        fillOpacity: 1,
-      });
-    },
+    pointToLayer: (_feature, latlng) =>
+      L.marker(latlng, {
+        icon: trainStationIcon(),
+        keyboard: false,
+      }),
     onEachFeature: (feature, layer) => {
       const p = feature.properties as StationProps;
       const code = p.lineCode ?? "—";
@@ -130,7 +125,19 @@ export function addTransitLayers(
   });
 
   lines.addTo(map);
-  stations.addTo(map);
+
+  // Stations only render at street-level zoom — at city overview the colored
+  // pips cluster into noise.
+  const MIN_STATION_ZOOM = 12;
+  function syncStationVisibility(): void {
+    if (map.getZoom() >= MIN_STATION_ZOOM) {
+      if (!map.hasLayer(stations)) stations.addTo(map);
+    } else if (map.hasLayer(stations)) {
+      map.removeLayer(stations);
+    }
+  }
+  syncStationVisibility();
+  map.on("zoomend", syncStationVisibility);
 
   return { lines, stations };
 }
@@ -149,6 +156,24 @@ export function uniqueLineCodes(linesLayer: L.GeoJSON): string[] {
     const ib = order.findIndex((p) => b.toUpperCase().startsWith(p));
     if (ia !== ib) return ia - ib;
     return a.localeCompare(b, "tr", { numeric: true });
+  });
+}
+
+function trainStationIcon(): L.DivIcon {
+  // Tailwind preflight applies `img { max-width: 100%; height: auto }`, which
+  // beats <img>'s width/height attributes (the source SVG is 800×800). The
+  // `!important` on the inline style locks the size we actually want.
+  const html = `<span style="
+    display:flex;align-items:center;justify-content:center;
+    width:18px;height:18px;border-radius:50%;
+    background:#fff;
+    box-shadow:0 1px 2px rgba(15,23,42,0.35);
+  "><img src="${trainIconUrl}" alt="" style="width:14px !important;height:14px !important;display:block;max-width:none;"/></span>`;
+  return L.divIcon({
+    className: "rail-station-icon",
+    html,
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
   });
 }
 

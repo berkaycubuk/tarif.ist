@@ -16,7 +16,7 @@ import {
   renderDisruptions,
   type DisruptionLayer,
 } from "./disruptions";
-import { setupBus, type BusController } from "./bus";
+import { setupBus, setupBusStopsLayer, type BusController } from "./bus";
 import {
   setupSearchBar,
   type SearchItem,
@@ -57,7 +57,6 @@ const map = createMap(mapContainer);
 
 let graph: TransitGraph | null = null;
 let linesLayer: L.GeoJSON | null = null;
-let stationsLayer: L.GeoJSON | null = null;
 let disruptionLayer: DisruptionLayer | null = null;
 let bus: BusController | null = null;
 let railItems: RailItem[] = [];
@@ -67,7 +66,6 @@ let railItems: RailItem[] = [];
 const lineInspector = setupLineInspector({
   map,
   getLinesLayer: () => linesLayer,
-  getStationsLayer: () => stationsLayer,
   getGraph: () => graph,
   onLineChange: (code) => disruptionLayer?.setVisibleLine(code),
 });
@@ -117,15 +115,20 @@ const searchBar = setupSearchBar({
 
 // --- Bootstrap --------------------------------------------------------------
 
-Promise.all([loadTransitData(), loadDisruptions(), setupBus(map)])
+Promise.all([
+  loadTransitData(),
+  loadDisruptions(),
+  setupBus(map),
+  setupBusStopsLayer(map),
+])
   .then(([data, disruptions, busCtrl]) => {
     const layers = addTransitLayers(map, data);
     linesLayer = layers.lines;
-    stationsLayer = layers.stations;
     graph = buildGraph(data);
     bus = busCtrl;
 
-    // Map starts empty — hide the rail layers until the user picks one.
+    // No rail line selected by default — lines stay hidden, but stations are
+    // always on (rendered by addTransitLayers).
     lineInspector.selectLine(null);
 
     railItems = uniqueLineCodes(linesLayer).map((code) => ({

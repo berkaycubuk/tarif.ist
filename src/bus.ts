@@ -5,6 +5,7 @@
 
 import L from "leaflet";
 import type { FeatureCollection, Geometry } from "geojson";
+import busIconUrl from "./assets/bus.svg";
 
 export interface BusIndexEntry {
   code: string;
@@ -31,7 +32,6 @@ export interface BusController {
 }
 
 const BUS_COLOR = "#ea580c"; // IETT-ish orange
-const BUS_STOP_FILL = "#fb923c";
 
 export async function setupBus(map: L.Map): Promise<BusController> {
   let index: BusIndexEntry[] = [];
@@ -73,60 +73,31 @@ export async function setupBus(map: L.Map): Promise<BusController> {
 
     const group = L.layerGroup();
     const bounds = L.latLngBounds([]);
-    // A stop can appear in both directions of a route — render only once,
-    // matching the metro layer where each station is a single marker.
-    const renderedStops = new Set<string>();
 
+    // The global bus stop layer already shows every stop; this view only
+    // adds the route shape on top.
     for (const f of data.features) {
       const geom = f.geometry;
       const props = f.properties;
       if (!geom) continue;
+      if (geom.type !== "LineString" || props.kind !== "shape") continue;
 
-      if (geom.type === "LineString" && props.kind === "shape") {
-        const latlngs = geom.coordinates.map(
-          ([lon, lat]) => [lat, lon] as [number, number]
-        );
-        const line = L.polyline(latlngs, {
-          color: BUS_COLOR,
-          weight: 5,
-          opacity: 0.9,
-          lineCap: "round",
-          lineJoin: "round",
-        });
-        line.bindTooltip(
-          `<strong>${escapeHtml(entry.code)}</strong> · ${escapeHtml(entry.longName)}`,
-          { sticky: true, direction: "top", opacity: 0.95 }
-        );
-        line.addTo(group);
-        latlngs.forEach((p) => bounds.extend(p));
-      } else if (geom.type === "Point" && props.kind === "stop") {
-        const dedupeKey =
-          props.stopId ??
-          `${(geom.coordinates as [number, number])[0]},${(geom.coordinates as [number, number])[1]}`;
-        if (renderedStops.has(dedupeKey)) continue;
-        renderedStops.add(dedupeKey);
-
-        const [lon, lat] = geom.coordinates as [number, number];
-        const marker = L.circleMarker([lat, lon], {
-          radius: 5,
-          color: "#ffffff",
-          weight: 2,
-          fillColor: BUS_STOP_FILL,
-          fillOpacity: 1,
-        });
-        const stopName = (props.name ?? "").trim();
-        if (stopName) {
-          marker.bindTooltip(stopName, {
-            permanent: true,
-            direction: "right",
-            offset: [8, 0],
-            className: "station-label",
-            opacity: 1,
-          });
-        }
-        marker.addTo(group);
-        bounds.extend([lat, lon]);
-      }
+      const latlngs = geom.coordinates.map(
+        ([lon, lat]) => [lat, lon] as [number, number]
+      );
+      const line = L.polyline(latlngs, {
+        color: BUS_COLOR,
+        weight: 5,
+        opacity: 0.9,
+        lineCap: "round",
+        lineJoin: "round",
+      });
+      line.bindTooltip(
+        `<strong>${escapeHtml(entry.code)}</strong> · ${escapeHtml(entry.longName)}`,
+        { sticky: true, direction: "top", opacity: 0.95 }
+      );
+      line.addTo(group);
+      latlngs.forEach((p) => bounds.extend(p));
     }
 
     group.addTo(map);
@@ -151,4 +122,131 @@ function escapeHtml(s: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+// Always-visible layer of every IETT bus stop. There are ~13.5k stops, so we
+// can't mount them all as DivIcons up front — that's 13k DOM nodes. Instead
+// we keep the feature list in memory and only mount markers within the
+// current map viewport, refreshing on pan/zoom. Below MIN_BUS_STOP_ZOOM the
+// layer is empty.
+const MIN_BUS_STOP_ZOOM = 14;
+
+interface BusStopFeatureProps {
+  stopId: string;
+  name: string;
+  lines: string[];
+}
+
+interface BusStopRecord {
+  id: string;
+  lat: number;
+  lon: number;
+  name: string;
+  lines: string[];
+}
+
+export interface BusStopsLayer {
+  destroy(): void;
+}
+
+export async function setupBusStopsLayer(
+  map: L.Map
+): Promise<BusStopsLayer | null> {
+  let data: FeatureCollection<Geometry, BusStopFeatureProps> | null = null;
+  try {
+    const res = await fetch("/data/bus/stops.geojson");
+    if (!res.ok) {
+      console.warn(`bus stops layer not available (HTTP ${res.status})`);
+      return null;
+    }
+    data = (await res.json()) as FeatureCollection<
+      Geometry,
+      BusStopFeatureProps
+    >;
+  } catch (err) {
+    console.warn("failed to load bus stops layer", err);
+    return null;
+  }
+
+  const stops: BusStopRecord[] = [];
+  for (const f of data.features) {
+    if (f.geometry?.type !== "Point") continue;
+    const [lon, lat] = f.geometry.coordinates as [number, number];
+    stops.push({
+      id: f.properties.stopId,
+      lat,
+      lon,
+      name: f.properties.name ?? "",
+      lines: f.properties.lines ?? [],
+    });
+  }
+
+  const icon = busStopIcon();
+  const group = L.layerGroup().addTo(map);
+  const mounted = new Map<string, L.Marker>();
+
+  function refresh(): void {
+    if (map.getZoom() < MIN_BUS_STOP_ZOOM) {
+      if (mounted.size) {
+        group.clearLayers();
+        mounted.clear();
+      }
+      return;
+    }
+    const bounds = map.getBounds();
+    const wanted = new Set<string>();
+    for (const s of stops) {
+      if (!bounds.contains([s.lat, s.lon])) continue;
+      wanted.add(s.id);
+      if (mounted.has(s.id)) continue;
+      const marker = L.marker([s.lat, s.lon], { icon, keyboard: false });
+      if (s.name || s.lines.length) {
+        marker.bindTooltip(
+          `<strong>${escapeHtml(s.name)}</strong>${
+            s.lines.length
+              ? `<br><span style="color:#64748b">${escapeHtml(s.lines.join(" · "))}</span>`
+              : ""
+          }`,
+          { direction: "top", offset: [0, -8], opacity: 0.95 }
+        );
+      }
+      marker.addTo(group);
+      mounted.set(s.id, marker);
+    }
+    for (const [id, marker] of mounted) {
+      if (wanted.has(id)) continue;
+      group.removeLayer(marker);
+      mounted.delete(id);
+    }
+  }
+
+  refresh();
+  map.on("moveend", refresh);
+
+  return {
+    destroy() {
+      map.off("moveend", refresh);
+      group.clearLayers();
+      mounted.clear();
+      if (map.hasLayer(group)) map.removeLayer(group);
+    },
+  };
+}
+
+function busStopIcon(): L.DivIcon {
+  // Tailwind preflight applies `img { max-width: 100%; height: auto }`, which
+  // beats <img>'s width/height attributes (the source SVG is 800×800). The
+  // `!important` on the inline style locks the size we actually want.
+  const html = `<span style="
+    display:flex;align-items:center;justify-content:center;
+    width:18px;height:18px;border-radius:50%;
+    background:#fff;
+    box-shadow:0 1px 2px rgba(15,23,42,0.35);
+  "><img src="${busIconUrl}" alt="" style="width:14px !important;height:14px !important;display:block;max-width:none;"/></span>`;
+  return L.divIcon({
+    className: "bus-stop-icon",
+    html,
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
+  });
 }
