@@ -87,7 +87,21 @@ function makeGraph(nodeSpecs: NodeSpec[], edgeSpecs: EdgeSpec[]): TransitGraph {
     });
   }
 
-  return { nodes, edges, byLine, lineGeometry: new Map() };
+  // Mirror the spatial-index build that buildGraph() does in production —
+  // findNodesNear reads this and would otherwise see an empty index.
+  const NEAREST_CELL_DEG = 0.02;
+  const nearestIndex = new Map<string, StationNode[]>();
+  for (const n of nodes.values()) {
+    const key = `${Math.floor(n.lat / NEAREST_CELL_DEG)}|${Math.floor(n.lng / NEAREST_CELL_DEG)}`;
+    let arr = nearestIndex.get(key);
+    if (!arr) {
+      arr = [];
+      nearestIndex.set(key, arr);
+    }
+    arr.push(n);
+  }
+
+  return { nodes, edges, byLine, lineGeometry: new Map(), nearestIndex };
 }
 
 // --- Tests ------------------------------------------------------------------

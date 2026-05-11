@@ -3,7 +3,7 @@
 // the virtual nodes to the K closest stations within MAX_WALK_M.
 
 import type { EdgeKind, StationNode, TransitGraph } from "./graph";
-import { getNode, getEdges, haversineMeters } from "./graph";
+import { getNode, getEdges, findNodesNear, haversineMeters } from "./graph";
 
 const WALK_SPEED_MPS = 1.4;
 const MAX_WALK_M = 1500;
@@ -140,11 +140,7 @@ function findNearestStations(
   k: number,
   maxDist: number
 ): Array<{ node: StationNode; distM: number }> {
-  const arr: Array<{ node: StationNode; distM: number }> = [];
-  for (const node of graph.nodes.values()) {
-    const d = haversineMeters(point.lat, point.lng, node.lat, node.lng);
-    if (d <= maxDist) arr.push({ node, distM: d });
-  }
+  const arr = findNodesNear(graph, point.lat, point.lng, maxDist);
   arr.sort((a, b) => a.distM - b.distM);
   return arr.slice(0, k);
 }

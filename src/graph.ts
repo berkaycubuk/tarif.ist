@@ -90,6 +90,62 @@ export interface TransitGraph {
   byLine: Map<string, StationNode[]>;
   /** flattened polyline + cumulative distance per line */
   lineGeometry: Map<string, LineGeometry>;
+  /** spatial bucket of nodes for O(1)-ish nearest-station queries (see
+   *  NEAREST_CELL_DEG below; query via findNodesNear) */
+  nearestIndex: Map<string, StationNode[]>;
+}
+
+// Cell size for the nearest-node spatial index. 0.02° ≈ 2.2km lat × 1.7km lng
+// at Istanbul's latitude. Routing's MAX_WALK_M (1500m, in router.ts) is the
+// largest radius we ever query; ±1 cell from the query cell (the 3×3 window
+// scanned by findNodesNear) guarantees the query's reachable radius is fully
+// covered even when the point sits at the edge of its cell.
+const NEAREST_CELL_DEG = 0.02;
+function nearestCellKey(lat: number, lng: number): string {
+  return `${Math.floor(lat / NEAREST_CELL_DEG)}|${Math.floor(lng / NEAREST_CELL_DEG)}`;
+}
+
+function buildNearestIndex(
+  nodes: Map<string, StationNode>
+): Map<string, StationNode[]> {
+  const idx = new Map<string, StationNode[]>();
+  for (const n of nodes.values()) {
+    const key = nearestCellKey(n.lat, n.lng);
+    let arr = idx.get(key);
+    if (!arr) {
+      arr = [];
+      idx.set(key, arr);
+    }
+    arr.push(n);
+  }
+  return idx;
+}
+
+/**
+ * Return every node within `maxDist` meters of (lat, lng), with its distance.
+ * O(1)-ish — only nodes in the 9 cells around the query point are
+ * haversine-tested, instead of scanning the whole graph.
+ */
+export function findNodesNear(
+  graph: TransitGraph,
+  lat: number,
+  lng: number,
+  maxDist: number
+): Array<{ node: StationNode; distM: number }> {
+  const baseLat = Math.floor(lat / NEAREST_CELL_DEG);
+  const baseLng = Math.floor(lng / NEAREST_CELL_DEG);
+  const out: Array<{ node: StationNode; distM: number }> = [];
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      const bucket = graph.nearestIndex.get(`${baseLat + dy}|${baseLng + dx}`);
+      if (!bucket) continue;
+      for (const node of bucket) {
+        const d = haversineMeters(lat, lng, node.lat, node.lng);
+        if (d <= maxDist) out.push({ node, distM: d });
+      }
+    }
+  }
+  return out;
 }
 
 // --- Accessor helpers — callers use these instead of raw Map operations ------
@@ -463,5 +519,6 @@ export function buildGraph(
     addRailBusTransferEdges(nodes, edges);
   }
 
-  return { nodes, edges, byLine, lineGeometry };
+  const nearestIndex = buildNearestIndex(nodes);
+  return { nodes, edges, byLine, lineGeometry, nearestIndex };
 }

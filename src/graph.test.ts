@@ -6,7 +6,7 @@ import type {
   MultiLineString,
   Point,
 } from "geojson";
-import { buildGraph, type BusSegmentData } from "./graph";
+import { buildGraph, findNodesNear, type BusSegmentData } from "./graph";
 import type { LineProps, StationProps, TransitData } from "./transit";
 
 // --- Tiny GeoJSON builders --------------------------------------------------
@@ -302,6 +302,12 @@ describe("buildGraph — bus integration", () => {
     expect(railToBus.distM).toBeCloseTo(busToRail.distM, 6);
   });
 
+  it("indexes every node into `nearestIndex` for fast spatial lookup", () => {
+    let total = 0;
+    for (const bucket of g.nearestIndex.values()) total += bucket.length;
+    expect(total).toBe(g.nodes.size);
+  });
+
   it("does not produce rail↔bus transfers for stops outside 300m", () => {
     // Rail-B is at (41.020, 29.000). Bus s3 at (41.020, 29.001) is also
     // within 300m, so it *should* have a transfer. But the orphan stop sX
@@ -313,5 +319,95 @@ describe("buildGraph — bus integration", () => {
       .map((e) => e.to);
     expect(railBTransfers).toContain("bus#s3");
     expect(railBTransfers).not.toContain("bus#s2");
+  });
+});
+
+describe("findNodesNear — spatial query", () => {
+  // Spread 7 stations across ~10km north-south. Distances from (41.000, 29.000):
+  //   N0: 0m       N1: ~1.1km    N2: ~2.2km    N3: ~3.3km
+  //   N4: ~4.4km   N5: ~5.5km    N6: ~6.6km
+  // We then ask for nodes within various radii and verify the right set
+  // comes back — independent of routing logic.
+  const stations = Array.from({ length: 7 }, (_, i) => ({
+    type: "Feature" as const,
+    geometry: { type: "Point" as const, coordinates: [29.0, 41.0 + i * 0.01] },
+    properties: {
+      name: `N${i}`,
+      lineName: "L",
+      lineCode: "L",
+      kind: "Metro" as string | null,
+    },
+  }));
+  const lines = [
+    {
+      type: "Feature" as const,
+      geometry: {
+        type: "LineString" as const,
+        coordinates: [
+          [29.0, 41.000] as [number, number],
+          [29.0, 41.060] as [number, number],
+        ],
+      },
+      properties: {
+        name: "L",
+        shortName: "L",
+        lineCode: "L",
+        kind: "Metro" as string | null,
+        lengthKm: null,
+        stationCount: null,
+      },
+    },
+  ];
+  const g = buildGraph({
+    stations: { type: "FeatureCollection", features: stations },
+    lines: { type: "FeatureCollection", features: lines },
+  });
+
+  it("returns only nodes within maxDist of the query point", () => {
+    const found = findNodesNear(g, 41.000, 29.000, 2500);
+    const names = found.map((f) => f.node.stationName).sort();
+    // 0m, 1.1km, 2.2km — three nodes within 2.5km.
+    expect(names).toEqual(["N0", "N1", "N2"]);
+    // All reported distances must be inside the requested radius.
+    for (const f of found) expect(f.distM).toBeLessThanOrEqual(2500);
+  });
+
+  it("returns empty when the query point is far from every node", () => {
+    const found = findNodesNear(g, 38.0, 26.0, 1500);
+    expect(found).toEqual([]);
+  });
+
+  it("returns the same set as a brute-force linear scan (oracle test)", () => {
+    // Walk the index for several query points and verify it matches the
+    // naive O(n) scan for nodes within MAX_WALK_M (1500m). This is the
+    // contract that lets us swap the linear scan in router.ts.
+    const probes: Array<{ lat: number; lng: number }> = [
+      { lat: 41.000, lng: 29.000 },
+      { lat: 41.005, lng: 29.000 }, // between N0 and N1
+      { lat: 41.015, lng: 29.000 }, // cell boundary (cellLat=2050)
+      { lat: 41.030, lng: 29.000 },
+    ];
+    const allNodes = [...g.nodes.values()];
+    for (const p of probes) {
+      const indexed = new Set(
+        findNodesNear(g, p.lat, p.lng, 1500).map((f) => f.node.id)
+      );
+      const brute = new Set(
+        allNodes
+          .filter((n) => {
+            const dLat = ((n.lat - p.lat) * Math.PI) / 180;
+            const dLng = ((n.lng - p.lng) * Math.PI) / 180;
+            const a =
+              Math.sin(dLat / 2) ** 2 +
+              Math.cos((p.lat * Math.PI) / 180) *
+                Math.cos((n.lat * Math.PI) / 180) *
+                Math.sin(dLng / 2) ** 2;
+            const d = 2 * 6371000 * Math.asin(Math.sqrt(a));
+            return d <= 1500;
+          })
+          .map((n) => n.id)
+      );
+      expect(indexed).toEqual(brute);
+    }
   });
 });
