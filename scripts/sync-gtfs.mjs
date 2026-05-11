@@ -7,6 +7,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withRetry } from "./_retry.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = resolve(__dirname, "..", "public", "data");
@@ -44,9 +45,14 @@ const ROUTE_TO_LINE = {
 };
 
 async function fetchJson(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  return res.json();
+  return withRetry(
+    async () => {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+      return res.json();
+    },
+    { label: url }
+  );
 }
 
 function parseCsv(text) {
@@ -61,9 +67,14 @@ function parseCsv(text) {
 }
 
 async function fetchCsv(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  return parseCsv(await res.text());
+  return withRetry(
+    async () => {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+      return parseCsv(await res.text());
+    },
+    { label: url }
+  );
 }
 
 function timeToSec(hhmmss) {

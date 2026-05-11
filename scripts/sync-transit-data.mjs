@@ -9,6 +9,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withRetry } from "./_retry.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = resolve(__dirname, "..", "public", "data");
@@ -52,13 +53,16 @@ function deriveLineCode(...candidates) {
 
 async function fetchJson(url) {
   console.log(`→ fetching ${url}`);
-  const res = await fetch(url, {
-    headers: { "User-Agent": "istgoto-build/1.0 (+https://github.com)" },
-  });
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} for ${url}`);
-  }
-  return res.json();
+  return withRetry(
+    async () => {
+      const res = await fetch(url, {
+        headers: { "User-Agent": "istgoto-build/1.0 (+https://github.com)" },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+      return res.json();
+    },
+    { label: url }
+  );
 }
 
 function trimStations(geojson) {

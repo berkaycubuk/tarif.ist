@@ -22,6 +22,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { spawn } from "node:child_process";
+import { withRetry } from "./_retry.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = resolve(__dirname, "..", "public", "data", "bus");
@@ -46,19 +47,29 @@ function roundNum(n) {
 }
 
 async function fetchJson(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  return res.json();
+  return withRetry(
+    async () => {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+      return res.json();
+    },
+    { label: url }
+  );
 }
 
 async function fetchText(url) {
   console.log(`  → ${url}`);
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  // IETT GTFS is shipped as UTF-8 (with BOM) but the strings inside are
-  // already mojibake (Latin-1 read of the original UTF-8). We decode the file
-  // bytes as UTF-8, then run fixDoubleEncoded to recover Turkish chars.
-  return new TextDecoder("utf-8").decode(await res.arrayBuffer());
+  return withRetry(
+    async () => {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+      // IETT GTFS is shipped as UTF-8 (with BOM) but the strings inside are
+      // already mojibake (Latin-1 read of the original UTF-8). We decode the
+      // bytes as UTF-8, then run fixDoubleEncoded to recover Turkish chars.
+      return new TextDecoder("utf-8").decode(await res.arrayBuffer());
+    },
+    { label: url }
+  );
 }
 
 // IETT's stop_times.csv resource is silently truncated to ~1 048 575 rows
@@ -67,31 +78,39 @@ async function fetchText(url) {
 // line-by-line. Returns the path to the extracted file (caller deletes).
 async function downloadAndUnzipStopTimes(url) {
   console.log(`  → ${url}`);
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  const zipPath = resolve(tmpdir(), `istgoto-iett-${Date.now()}.zip`);
-  const outPath = resolve(tmpdir(), `istgoto-iett-${Date.now()}.txt`);
-  await writeFile(zipPath, buf);
+  // This is the largest fetch in the build (~22 MB) and the one that drops
+  // most often. Use more attempts than the default so a couple of socket
+  // errors in a row don't tank the deploy.
+  return withRetry(
+    async () => {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      const zipPath = resolve(tmpdir(), `istgoto-iett-${Date.now()}.zip`);
+      const outPath = resolve(tmpdir(), `istgoto-iett-${Date.now()}.txt`);
+      await writeFile(zipPath, buf);
 
-  const { openSync, closeSync } = await import("node:fs");
-  await new Promise((ok, rej) => {
-    const fd = openSync(outPath, "w");
-    const child = spawn("unzip", ["-p", zipPath], {
-      stdio: ["ignore", fd, "inherit"],
-    });
-    child.on("error", (err) => {
-      closeSync(fd);
-      rej(err);
-    });
-    child.on("close", (code) => {
-      closeSync(fd);
-      if (code !== 0) rej(new Error(`unzip exited ${code}`));
-      else ok();
-    });
-  });
-  await rm(zipPath, { force: true });
-  return outPath;
+      const { openSync, closeSync } = await import("node:fs");
+      await new Promise((ok, rej) => {
+        const fd = openSync(outPath, "w");
+        const child = spawn("unzip", ["-p", zipPath], {
+          stdio: ["ignore", fd, "inherit"],
+        });
+        child.on("error", (err) => {
+          closeSync(fd);
+          rej(err);
+        });
+        child.on("close", (code) => {
+          closeSync(fd);
+          if (code !== 0) rej(new Error(`unzip exited ${code}`));
+          else ok();
+        });
+      });
+      await rm(zipPath, { force: true });
+      return outPath;
+    },
+    { label: "stop_times.zip", attempts: 4 }
+  );
 }
 
 async function streamStopTimes(path, cb) {
