@@ -32,6 +32,19 @@ const IETT_GTFS_PKG =
 const IETT_SHAPES_PKG =
   "https://data.ibb.gov.tr/api/3/action/package_show?id=iett-hat-guzergahlari";
 
+// 5 decimals ≈ 1.1m at Istanbul's latitude — well below visible jitter at
+// max zoom (~0.6m/px) and well below routing's haversine noise.
+const COORD_DECIMALS = 5;
+const COORD_MULT = 10 ** COORD_DECIMALS;
+function roundCoord(c) {
+  if (typeof c === "number") return Math.round(c * COORD_MULT) / COORD_MULT;
+  if (Array.isArray(c)) return c.map(roundCoord);
+  return c;
+}
+function roundNum(n) {
+  return Math.round(n * COORD_MULT) / COORD_MULT;
+}
+
 async function fetchJson(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
@@ -475,7 +488,10 @@ async function main() {
       if (!feat) return;
       features.push({
         type: "Feature",
-        geometry: feat.geometry,
+        geometry: {
+          type: feat.geometry.type,
+          coordinates: roundCoord(feat.geometry.coordinates),
+        },
         properties: {
           kind: "shape",
           direction: dir,
@@ -534,7 +550,7 @@ async function main() {
         const stopName = (stop.stop_name || "").trim();
         features.push({
           type: "Feature",
-          geometry: { type: "Point", coordinates: [lon, lat] },
+          geometry: { type: "Point", coordinates: [roundNum(lon), roundNum(lat)] },
           properties: {
             kind: "stop",
             name: stopName,
@@ -601,7 +617,7 @@ async function main() {
   for (const [stopId, agg] of allStops) {
     stopFeatures.push({
       type: "Feature",
-      geometry: { type: "Point", coordinates: [agg.lng, agg.lat] },
+      geometry: { type: "Point", coordinates: [roundNum(agg.lng), roundNum(agg.lat)] },
       properties: {
         stopId,
         name: agg.name,
@@ -620,7 +636,7 @@ async function main() {
   // and bus edges into the transit graph.
   const segStops = {};
   for (const [stopId, agg] of allStops) {
-    segStops[stopId] = { lat: agg.lat, lng: agg.lng, name: agg.name };
+    segStops[stopId] = { lat: roundNum(agg.lat), lng: roundNum(agg.lng), name: agg.name };
   }
   const segRoutes = [];
   for (const entry of index) {

@@ -24,6 +24,20 @@ const LINE_OPERATIONAL = new Set(["Mevcut", "Marmaray"]);
 
 const LINE_CODE_RE = /(M\d+[A-Za-z]?|T\d+|F\d+|B\d+|Marmaray)/i;
 
+// 5 decimals ≈ 1.1m at Istanbul's latitude — well below visible jitter at
+// max zoom (~0.6m/px) and well below routing's haversine noise.
+const COORD_DECIMALS = 5;
+const COORD_MULT = 10 ** COORD_DECIMALS;
+function roundCoord(c) {
+  if (typeof c === "number") return Math.round(c * COORD_MULT) / COORD_MULT;
+  if (Array.isArray(c)) return c.map(roundCoord);
+  return c;
+}
+function roundGeometry(geom) {
+  if (geom && geom.coordinates) geom.coordinates = roundCoord(geom.coordinates);
+  return geom;
+}
+
 function deriveLineCode(...candidates) {
   for (const s of candidates) {
     if (typeof s !== "string") continue;
@@ -55,7 +69,7 @@ function trimStations(geojson) {
     const lineCode = deriveLineCode(p.PROJE_ADI);
     features.push({
       type: "Feature",
-      geometry: f.geometry,
+      geometry: roundGeometry(f.geometry),
       properties: {
         name: p.ISTASYON ?? "",
         lineName: p.PROJE_ADI ?? "",
@@ -75,7 +89,7 @@ function trimLines(geojson) {
     const lineCode = deriveLineCode(p.PROJE_AD_KISA, p.PROJE_ADI);
     features.push({
       type: "Feature",
-      geometry: f.geometry,
+      geometry: roundGeometry(f.geometry),
       properties: {
         name: p.PROJE_ADI ?? "",
         shortName: p.PROJE_AD_KISA ?? "",
