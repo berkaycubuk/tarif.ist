@@ -11,6 +11,7 @@ import { makeEndpointMarker } from "./map";
 import type { RenderedRoute } from "./route-render";
 import { t } from "./i18n";
 import { encodeShareRoute } from "./route-share";
+import { track, placeKind } from "./analytics";
 
 export interface PlanPanelOptions {
   container: HTMLElement;
@@ -410,18 +411,33 @@ export function setupPlanPanel({
     results.classList.remove("hidden");
     results.innerHTML = `<div class="text-[11px] text-slate-500">${t("plan.finding")}</div>`;
 
+    track("plan_requested", {
+      from_kind: placeKind(startPlace.type),
+      to_kind: placeKind(endPlace.type),
+    });
+    const planStartedAt = performance.now();
+
     try {
       const rendered = await planRoute(startPlace, endPlace);
+      const elapsed = Math.round(performance.now() - planStartedAt);
       if (!rendered) {
         results.innerHTML = `
           <div class="font-medium text-slate-800">${t("plan.noRoute")}</div>
           <div class="mt-1 text-[11px] text-slate-500">${t("plan.noRouteHint")}</div>
         `;
+        track("plan_failed", { reason: "no_path", duration_ms: elapsed });
         return;
       }
       activeRender = rendered;
       results.innerHTML = rendered.itineraryHtml;
       onRouteShown?.(gatherRouteStations(rendered));
+      const modeSet = new Set(rendered.route.legs.map((l) => l.kind));
+      track("plan_succeeded", {
+        duration_ms: elapsed,
+        legs: rendered.route.legs.length,
+        modes: [...modeSet].sort().join("+"),
+        total_sec: Math.round(rendered.route.totalSec),
+      });
 
       // Wire line badge clicks to per-leg highlighting.
       if (onLegSelect) {
@@ -449,6 +465,10 @@ export function setupPlanPanel({
     } catch (err) {
       console.error("plan route failed", err);
       results.innerHTML = `<div class="text-rose-700">${t("plan.error")}</div>`;
+      track("plan_failed", {
+        reason: "error",
+        duration_ms: Math.round(performance.now() - planStartedAt),
+      });
     }
   });
 
