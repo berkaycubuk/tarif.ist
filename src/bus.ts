@@ -146,8 +146,17 @@ function escapeHtml(s: string): string {
 // can't mount them all as DivIcons up front — that's 13k DOM nodes. Instead
 // we keep the feature list in memory and only mount markers within the
 // current map viewport, refreshing on pan/zoom. Below MIN_BUS_STOP_ZOOM the
-// layer is empty.
-const MIN_BUS_STOP_ZOOM = 14;
+// layer is empty. Matches Google Maps, which only surfaces bus stops at very
+// close zoom.
+const MIN_BUS_STOP_ZOOM = 15;
+
+// Spatial bucket size for the viewport query. 0.01° ≈ 1.1km lat × 0.85km lng
+// at Istanbul's latitude — a z15 viewport spans ~0.1° so we visit ~100 cells
+// per pan instead of scanning all 13.5k stops linearly.
+const STOP_CELL_DEG = 0.01;
+function stopCellCoords(lat: number, lon: number): [number, number] {
+  return [Math.floor(lat / STOP_CELL_DEG), Math.floor(lon / STOP_CELL_DEG)];
+}
 
 interface BusStopFeatureProps {
   stopId: string;
@@ -190,17 +199,29 @@ export async function setupBusStopsLayer(
     return null;
   }
 
-  const stops: BusStopRecord[] = [];
+  const stopsById = new Map<string, BusStopRecord>();
+  // Cell key → stops in that cell. Keyed as "lat|lon" cell coords so a
+  // viewport query iterates a small rectangle of cells instead of all stops.
+  const stopGrid = new Map<string, BusStopRecord[]>();
   for (const f of data.features) {
     if (f.geometry?.type !== "Point") continue;
     const [lon, lat] = f.geometry.coordinates as [number, number];
-    stops.push({
+    const rec: BusStopRecord = {
       id: f.properties.stopId,
       lat,
       lon,
       name: f.properties.name ?? "",
       lines: f.properties.lines ?? [],
-    });
+    };
+    stopsById.set(rec.id, rec);
+    const [cy, cx] = stopCellCoords(lat, lon);
+    const key = `${cy}|${cx}`;
+    let bucket = stopGrid.get(key);
+    if (!bucket) {
+      bucket = [];
+      stopGrid.set(key, bucket);
+    }
+    bucket.push(rec);
   }
 
   const icon = busStopIcon();
@@ -238,11 +259,30 @@ export async function setupBusStopsLayer(
       }
       return;
     }
-    const bounds = filtered ? null : map.getBounds();
     const wanted = new Set<string>();
-    for (const s of stops) {
-      if (stopFilter && !stopFilter.has(s.id)) continue;
-      if (bounds && !bounds.contains([s.lat, s.lon])) continue;
+    const candidates: BusStopRecord[] = [];
+    if (filtered) {
+      // Route-focus: iterate the filter set (typ. ~50 stops), not all 13.5k.
+      for (const id of stopFilter!) {
+        const rec = stopsById.get(id);
+        if (rec) candidates.push(rec);
+      }
+    } else {
+      // Viewport query: walk only cells the bounds touch.
+      const b = map.getBounds();
+      const [yMin, xMin] = stopCellCoords(b.getSouth(), b.getWest());
+      const [yMax, xMax] = stopCellCoords(b.getNorth(), b.getEast());
+      for (let cy = yMin; cy <= yMax; cy++) {
+        for (let cx = xMin; cx <= xMax; cx++) {
+          const bucket = stopGrid.get(`${cy}|${cx}`);
+          if (!bucket) continue;
+          for (const s of bucket) {
+            if (b.contains([s.lat, s.lon])) candidates.push(s);
+          }
+        }
+      }
+    }
+    for (const s of candidates) {
       wanted.add(s.id);
       if (mounted.has(s.id)) continue;
       const marker = L.marker([s.lat, s.lon], { icon, keyboard: false });
