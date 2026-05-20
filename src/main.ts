@@ -3,6 +3,7 @@ import L from "leaflet";
 import { createMap } from "./map";
 import {
   addTransitLayers,
+  fetchLineGeometry,
   loadTransitData,
   railStationKey,
   uniqueLineCodes,
@@ -203,7 +204,6 @@ let activeRailLine: string | null = null;
 const lineInspector = setupLineInspector({
   map,
   getLinesLayer: () => linesLayer,
-  getGraph: () => graph,
   onLineChange: (code) => {
     activeRailLine = code;
     disruptionLayer?.setVisibleLine(code);
@@ -357,13 +357,21 @@ const disruptionsPromise = loadDisruptions();
 const railReady = Promise.all([
   loadTransitData(),
   setupBus(map),
+  // Backend pre-computes a single clean polyline per line code (vertex graph +
+  // Dijkstra, see backend/render.go). Failing fast to null is fine — transit
+  // layers fall back to straight station-to-station hops in that case.
+  fetchLineGeometry(),
 ])
-  .then(([data, busCtrl]) => {
-    const layers = addTransitLayers(map, data);
+  .then(([data, busCtrl, lineGeometry]) => {
+    // Graph is built first because addTransitLayers uses byLine ordering to
+    // emit one polyline per rail line (the backend geometry is keyed by code,
+    // not by station sequence — we still need the graph for ordering and to
+    // skip bus routes).
+    graph = buildGraph(data, null);
+    const layers = addTransitLayers(map, data, graph, lineGeometry);
     linesLayer = layers.lines;
     railStations = layers.stations;
     bus = busCtrl;
-    graph = buildGraph(data, null);
 
     // No rail line selected by default — lines stay hidden, stations + bus
     // stops are visible (zoom-gated inside their respective layers).

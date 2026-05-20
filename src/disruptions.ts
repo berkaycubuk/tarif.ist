@@ -1,14 +1,17 @@
-// Loads live service disruptions from the Metro İstanbul public API and
-// overlays them on the map: dashed segments along affected stretches of a
-// line, plus warning markers at affected stations. Station names are
-// auto-detected from the Turkish description text by matching against the
-// known stations of the affected line.
+// Renders service disruptions on the map: dashed segments along affected
+// stretches of a line, plus warning markers at affected stations. Station
+// names are auto-detected from the Turkish description text by matching
+// against the known stations of the affected line.
 //
-// API: https://api.ibb.gov.tr/MetroIstanbul/api/MetroMobile/V2/GetServiceStatuses
-//   (CORS allows direct browser access; no key required)
+// The disruption feed itself comes from the livepos backend at
+// `${LIVE_TRAINS_URL}/v1/disruptions`. The backend polls the IBB Metro
+// Istanbul service-status API in the background and caches the adapted
+// (line-code normalized, type/severity inferred, title formatted) payload —
+// the slow upstream call no longer happens per-client.
 
 import L from "leaflet";
 import { sliceLine } from "./geo";
+import { LIVE_TRAINS_URL } from "./flags";
 import type { TransitGraph, StationNode } from "./graph";
 
 export type DisruptionSeverity = "info" | "warning" | "critical";
@@ -60,158 +63,67 @@ export interface DisruptionLayer {
   destroy(): void;
 }
 
-// --- Live API ---------------------------------------------------------------
+// --- Backend feed -----------------------------------------------------------
 
-const SERVICE_STATUS_URL =
-  "https://api.ibb.gov.tr/MetroIstanbul/api/MetroMobile/V2/GetServiceStatuses";
-
-interface MetroServiceStatusItem {
-  LineId: number;
-  LineName: string;
-  Description: string;
-  IsActive: boolean;
-  UpdateDate: string;
-  LineLongDescription?: string;
-  LineShortDescription?: string;
-  ServiceStatuImage?: string;
-  LineImage?: string;
+interface BackendDisruptionItem {
+  id: string;
+  lineCode: string;
+  severity: DisruptionSeverity;
+  type: DisruptionType;
+  title: string;
+  description: string;
+  startTime?: string | null;
+  endTime?: string | null;
 }
 
-interface MetroApiResponse<T> {
-  Success: boolean;
-  Error: string | null;
-  Data: T[];
+interface BackendDisruptionsResponse {
+  fetchedAt: number;
+  items?: BackendDisruptionItem[];
 }
 
 /**
- * Fetch live service disruptions from the Metro İstanbul API. Returns an
- * empty list on any error so the rest of the app keeps working.
+ * Fetch the cached disruption snapshot from the livepos backend.
  *
- * The IBB gateway is genuinely slow — first response often takes 8–12s — so
- * we use a generous timeout, and on timeout we retry once before giving up.
- * The whole call runs in the background and never blocks app startup, so
- * being patient here costs us nothing.
+ * The backend polls the IBB Metro Istanbul API in the background and does all
+ * the line-code normalization and Turkish-keyword classification server-side,
+ * so this is a fast read of a small JSON document. Returns an empty list on
+ * any error so the rest of the app keeps working — disruptions are a non-
+ * critical overlay.
  */
 export async function loadDisruptions(): Promise<Disruption[]> {
-  const attempt = async (timeoutMs: number) => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetch(SERVICE_STATUS_URL, {
-        headers: { Accept: "application/json" },
-        cache: "no-store",
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        console.warn(`disruptions API returned HTTP ${res.status}`);
-        return null;
-      }
-      return (await res.json()) as MetroApiResponse<MetroServiceStatusItem>;
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-
-  let body: MetroApiResponse<MetroServiceStatusItem> | null = null;
   try {
-    body = await attempt(15_000);
-  } catch (err) {
-    console.warn("disruptions: first attempt failed, retrying", err);
-    try {
-      body = await attempt(20_000);
-    } catch (err2) {
-      console.warn("disruptions: retry failed, giving up", err2);
+    const res = await fetch(`${LIVE_TRAINS_URL}/v1/disruptions`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!res.ok) {
+      console.warn(`disruptions backend returned HTTP ${res.status}`);
       return [];
     }
+    const body = (await res.json()) as BackendDisruptionsResponse;
+    const items = Array.isArray(body?.items) ? body.items : [];
+    const out: Disruption[] = items.map((item) => ({
+      id: item.id,
+      lineCode: item.lineCode,
+      severity: item.severity,
+      type: item.type,
+      title: item.title,
+      description: item.description,
+      // Stations are auto-detected later from the description text.
+      stations: undefined,
+      startTime: item.startTime ?? null,
+      endTime: item.endTime ?? null,
+    }));
+    if (out.length) {
+      console.info(
+        `disruptions loaded: ${out.length} active · lines: ${[...new Set(out.map((d) => d.lineCode))].join(", ")}`
+      );
+    }
+    return out;
+  } catch (err) {
+    console.warn("disruptions: backend fetch failed", err);
+    return [];
   }
-
-  if (!body || !body.Success || !Array.isArray(body.Data)) return [];
-  const adapted = body.Data
-    .filter((item) => item.IsActive && item.Description?.trim())
-    .map(adaptServiceStatus);
-  if (adapted.length) {
-    console.info(
-      `disruptions loaded: ${adapted.length} active · lines: ${[...new Set(adapted.map((d) => d.lineCode))].join(", ")}`
-    );
-  }
-  return adapted;
-}
-
-function adaptServiceStatus(item: MetroServiceStatusItem): Disruption {
-  const description = item.Description.trim();
-  const lineCode = normalizeLineCode(item.LineName || "");
-  const type = inferType(description);
-  const severity = inferSeverity(description, type);
-  return {
-    id: `metro-${item.LineId}-${item.UpdateDate}`,
-    lineCode,
-    severity,
-    type,
-    title: titleFor(type, item),
-    description,
-    // Stations are auto-detected later from the description text.
-    stations: undefined,
-    startTime: normalizeTime(item.UpdateDate),
-    endTime: null,
-  };
-}
-
-/**
- * Pull a canonical line code (matching what we use in our own data) out of
- * whatever string the Metro İstanbul API gives us in `LineName`. Real-world
- * values seen include "M7", "M7 Hattı", "Marmaray", "T1 Bağcılar-Kabataş", …
- * Without this, "M7 Hattı".toUpperCase() doesn't match our "M7" key and the
- * disruption silently never lights up on the map.
- */
-function normalizeLineCode(raw: string): string {
-  const s = raw.trim();
-  if (!s) return "";
-  const m = s.match(/^(M\d{1,2}[AB]?|T\d{1,2}|F\d{1,2}|Marmaray)\b/i);
-  if (!m) return s;
-  const token = m[1];
-  // Our rail data uses "Marmaray" (mixed case), not "MARMARAY".
-  if (token.toLowerCase() === "marmaray") return "Marmaray";
-  return token.toUpperCase();
-}
-
-function normalizeTime(s: string | null | undefined): string | null {
-  if (!s) return null;
-  // The API returns local Istanbul time without a timezone offset. Stamp it
-  // with +03:00 so JS Date parses it correctly.
-  return /[zZ]|[+-]\d\d:?\d\d$/.test(s) ? s : `${s}+03:00`;
-}
-
-function titleFor(
-  type: DisruptionType,
-  item: MetroServiceStatusItem
-): string {
-  const line =
-    item.LineLongDescription?.trim() ||
-    item.LineShortDescription?.trim() ||
-    item.LineName;
-  return `${line} — ${TYPE_LABEL[type]}`;
-}
-
-function inferType(text: string): DisruptionType {
-  const t = text.toLocaleLowerCase("tr");
-  if (/\b(kapal[ıi]|kapatıl|iptal|servis dı[şs]ı)\b/.test(t)) return "closure";
-  if (/\b(onar[ıi]m|tamir)\b/.test(t)) return "repair";
-  if (/\b(bak[ıi]m|çal[ıi][şs]ma|yenile|revizyon)\b/.test(t))
-    return "maintenance";
-  if (/\b(gecikme|geç|yavaş)\b/.test(t)) return "delay";
-  if (/\b(arıza|ariza|kaza)\b/.test(t)) return "incident";
-  return "incident";
-}
-
-function inferSeverity(
-  text: string,
-  type: DisruptionType
-): DisruptionSeverity {
-  const t = text.toLocaleLowerCase("tr");
-  if (type === "closure" || /\b(iptal|kapal[ıi]|kapatıl)\b/.test(t))
-    return "critical";
-  if (type === "delay" && !/\b(uzun|büyük)\b/.test(t)) return "info";
-  return "warning";
 }
 
 /**

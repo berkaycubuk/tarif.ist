@@ -39,3 +39,6 @@ coverage
 
 # Synced transit data (regenerated via `npm run sync:data`)
 public/data/
+
+# Backend build artifact
+backend/livepos
