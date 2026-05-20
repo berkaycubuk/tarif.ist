@@ -1,18 +1,22 @@
-# Snippet to paste into your existing Caddyfile on the VPS.
-# Caddy handles TLS via Let's Encrypt automatically — just make sure
-# backend.tarif.ist has an A/AAAA record pointing at the VPS.
+# Snippet to paste into your existing Caddyfile.
+#
+# This assumes Caddy itself runs in a container and shares a Docker network
+# with the livepos container (see compose.yaml). The reverse-proxy target is
+# the livepos container's name, resolved via Docker's built-in DNS.
+#
+# Make sure backend.tarif.ist has an A record pointing at the VPS, and that
+# Cloudflare DNS for that record is set to "DNS only" (grey cloud) so Caddy
+# can complete the Let's Encrypt HTTP-01 / TLS-ALPN-01 challenge.
 
 backend.tarif.ist {
 	encode zstd gzip
 
-	# Upstream is the livepos container bound to 127.0.0.1:8080 by compose.yaml.
-	reverse_proxy 127.0.0.1:8080 {
-		health_uri     /healthz
+	reverse_proxy tarif-ist-livepos:8080 {
+		health_uri      /healthz
 		health_interval 30s
 		health_timeout  5s
 	}
 
-	# Quiet down logs for the health probe itself.
 	log {
 		output file /var/log/caddy/backend.tarif.ist.log
 		format json

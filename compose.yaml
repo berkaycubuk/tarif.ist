@@ -1,14 +1,14 @@
 # Backend deploy for tarif.ist.
 #
-# TLS + the backend.tarif.ist hostname live on the host's Caddy. Caddy reverse-
-# proxies to this container over the host loopback (127.0.0.1:8080), so the
-# port is bound to localhost only — nothing on this service is exposed to the
-# public internet directly.
+# Caddy on this host runs in its own container and reverse-proxies to livepos
+# over a shared Docker network — no host port is published. The backend is
+# reachable only from containers on the `caddy` network, which means nothing
+# leaks to the public internet directly.
 #
 # Build:   docker compose build
 # Run:     docker compose up -d
 # Logs:    docker compose logs -f livepos
-# Update:  docker compose build --pull && docker compose up -d
+# Update:  git pull && docker compose build && docker compose up -d
 #
 # Before building, refresh the data files the image bakes in:
 #   npm run sync:data && npm run sync:gtfs
@@ -21,14 +21,22 @@ services:
     image: tarif-ist-livepos:latest
     container_name: tarif-ist-livepos
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:8080:8080"
     environment:
       # Lock CORS to the public site. Override per env if you point a staging
       # frontend at this backend.
       CORS_ORIGIN: "https://tarif.ist"
       # Default is 60s; the IBB endpoint barely changes, so don't go lower.
       DISRUPTIONS_POLL: "60s"
+    networks:
+      - caddy
     # No docker-level healthcheck — distroless has no shell/wget, and Caddy
     # is already probing GET /healthz upstream. If you ever drop Caddy from
     # in front of this, add a healthcheck here.
+
+networks:
+  # Caddy lives in its own compose project; we attach to its network as an
+  # external so reverse-proxy by container DNS name works. Change `name:` to
+  # match `docker inspect <caddy> --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}'`.
+  caddy:
+    external: true
+    name: zambakpage_default
