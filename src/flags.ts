@@ -12,8 +12,10 @@ export const FEATURES = {
   bus: false,
 } as const;
 
-/** Base URL of the livepos backend service. Override at build/dev time via
- *  the VITE_LIVE_TRAINS_URL env var (e.g. in .env.local). */
+/** Base URL of the livepos backend service. In production we default to the
+ *  public deploy at backend.tarif.ist; in dev we point at the local Go server.
+ *  Override either via the VITE_LIVE_TRAINS_URL env var (e.g. in .env.local
+ *  or the Cloudflare Pages env). */
 export const LIVE_TRAINS_URL =
   (import.meta.env.VITE_LIVE_TRAINS_URL as string | undefined) ??
-  "http://localhost:8080";
+  (import.meta.env.PROD ? "https://backend.tarif.ist" : "http://localhost:8080");
