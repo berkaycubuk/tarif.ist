@@ -39,6 +39,7 @@ import { t } from "./i18n";
 import "./theme"; // applies dark class on html early
 import { setupSettings } from "./settings-modal";
 import { setupInfo } from "./info-modal";
+import { FEATURES } from "./flags";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 
@@ -65,8 +66,10 @@ app.innerHTML = `
          on the right via pr-14 so they don't overlap. -->
     <div id="search-root" class="pointer-events-none absolute inset-x-0 top-3 z-20 flex w-full justify-center px-4 pr-28 sm:left-1/2 sm:right-auto sm:top-5 sm:max-w-md sm:-translate-x-1/2 sm:pr-4"></div>
 
+    ${FEATURES.routePlanning ? `
     <!-- Plan panel container -->
     <section id="plan-panel-root" class="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pb-3 sm:inset-y-0 sm:right-auto sm:left-6 sm:flex sm:items-center sm:px-0 sm:pb-0" style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom));"></section>
+    ` : ""}
   </div>
 `;
 
@@ -211,8 +214,10 @@ const lineInspector = setupLineInspector({
 // A shared link (?r=encoded full route, or the older ?s & ?e endpoint pair)
 // launches the read-only viewer instead of the editable plan-panel.
 
-const planPanelRoot = document.querySelector<HTMLElement>("#plan-panel-root")!;
-const sharedRouteParams = readSharedRouteParams();
+const planPanelRoot = FEATURES.routePlanning
+  ? document.querySelector<HTMLElement>("#plan-panel-root")!
+  : null;
+const sharedRouteParams = FEATURES.routePlanning ? readSharedRouteParams() : null;
 
 const planRoute = async (
   start: { lat: number; lng: number },
@@ -229,7 +234,7 @@ const planRoute = async (
   return renderRoute(map, graph, route);
 };
 
-if (!sharedRouteParams) {
+if (FEATURES.routePlanning && !sharedRouteParams && planPanelRoot) {
   void setupPlanPanel({
     container: planPanelRoot,
     map,
@@ -410,7 +415,7 @@ const busDataReady = railReady
     console.warn("bus data not available; continuing rail-only", err);
   });
 
-if (sharedRouteParams) {
+if (sharedRouteParams && planPanelRoot) {
   // Mount the read-only viewer once the bus-aware graph is ready, since a
   // shared route can include bus legs that need bus nodes for decoding.
   void busDataReady.then(() => {
