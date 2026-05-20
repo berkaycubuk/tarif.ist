@@ -5,6 +5,11 @@
 import L from "leaflet";
 import { colorForLine } from "./transit";
 import { FEATURES, LIVE_TRAINS_URL } from "./flags";
+import {
+  buildLineGeometry,
+  projectPointOntoLine,
+  type LineGeometry,
+} from "./geo";
 
 export interface LineInspectorOptions {
   map: L.Map;
@@ -57,7 +62,7 @@ export function setupLineInspector({
     });
 
     fitToLine(code);
-    startTrainSimulation(code);
+    if (FEATURES.liveTrainPositions) startTrainSimulation(code);
   }
 
   function fitToLine(code: string): void {
@@ -79,10 +84,11 @@ export function setupLineInspector({
 
   // --- Live train markers --------------------------------------------------
   // The server returns pure schedule data per train (which segment, how far
-  // through, seconds to next station). All positioning is done here: for
-  // each train we look up its from/to stations in the catalog and lerp in
-  // a straight line between their coordinates. No polyline walking — that
-  // turned out to be too fragile against messy MultiLineString geometry.
+  // through, seconds to next station). The frontend positions each train by
+  // projecting both stations onto the *visible* line polyline (the one the
+  // user actually sees on the map) and walking that polyline between them,
+  // so markers always sit on the line — even when the backend's station
+  // ordering treats geographically distant stations as adjacent.
 
   const POLL_INTERVAL_MS = 2000;
 
@@ -117,6 +123,13 @@ export function setupLineInspector({
   /** Station lat/lng by line code, fetched once from /v1/lines?stations=1
    *  and cached for the session. */
   const stationCoords = new Map<string, Map<string, BackendStation>>();
+  /** Cached projection data per line code: the parsed LineGeometry of the
+   *  visible polyline, plus the cumulative distance (metres) at which each
+   *  station projects onto it. Built lazily on first train tick. */
+  const lineProjections = new Map<
+    string,
+    { geom: LineGeometry; stationDist: Map<string, number> }
+  >();
   let catalogPromise: Promise<void> | null = null;
   let liveLineCode: string | null = null;
   let pollTimer: number | undefined;
@@ -183,6 +196,67 @@ export function setupLineInspector({
     }
   }
 
+  /** Build (and cache) projection data for the *visible* polyline of `code`.
+   *  Pulls geometry straight from the live `linesLayer`, so the trains track
+   *  whatever line the user actually sees on the map. */
+  function ensureProjection(
+    lineCode: string
+  ): { geom: LineGeometry; stationDist: Map<string, number> } | null {
+    const cached = lineProjections.get(lineCode);
+    if (cached) return cached;
+    const linesLayer = getLinesLayer();
+    if (!linesLayer) return null;
+    let visibleGeom:
+      | { type: "LineString" | "MultiLineString"; coordinates: any }
+      | null = null;
+    linesLayer.eachLayer((layer) => {
+      if (visibleGeom) return;
+      const feature = (layer as any).feature;
+      if (feature?.properties?.lineCode !== lineCode) return;
+      const g = feature.geometry;
+      if (g?.type === "LineString" || g?.type === "MultiLineString") {
+        visibleGeom = g;
+      }
+    });
+    if (!visibleGeom) return null;
+    const geom = buildLineGeometry(visibleGeom);
+    if (geom.path.length < 2) return null;
+    const stations = stationCoords.get(lineCode);
+    const stationDist = new Map<string, number>();
+    if (stations) {
+      for (const [name, s] of stations) {
+        const { cumDist } = projectPointOntoLine(s.lng, s.lat, geom);
+        stationDist.set(name, cumDist);
+      }
+    }
+    const entry = { geom, stationDist };
+    lineProjections.set(lineCode, entry);
+    return entry;
+  }
+
+  function pointAlongLine(
+    geom: LineGeometry,
+    dist: number
+  ): [number, number] {
+    const { path, cum, totalLengthM } = geom;
+    if (dist <= 0) return [path[0][1], path[0][0]];
+    const last = path.length - 1;
+    if (dist >= totalLengthM) return [path[last][1], path[last][0]];
+    // Binary search for the segment containing `dist`.
+    let lo = 0;
+    let hi = last;
+    while (lo + 1 < hi) {
+      const mid = (lo + hi) >> 1;
+      if (cum[mid] <= dist) lo = mid;
+      else hi = mid;
+    }
+    const segLen = cum[hi] - cum[lo];
+    const f = segLen > 0 ? (dist - cum[lo]) / segLen : 0;
+    const [ax, ay] = path[lo];
+    const [bx, by] = path[hi];
+    return [ay + (by - ay) * f, ax + (bx - ax) * f];
+  }
+
   /** Resolve a train to a target [lat, lng], or null when its station names
    *  aren't in the catalog yet (e.g. the load is still in flight). */
   function targetLatLngFor(
@@ -197,9 +271,19 @@ export function setupLineInspector({
     if (t.fromStation === t.toStation || t.direction === "dwell") {
       return [from.lat, from.lng];
     }
-    // Straight-line interpolation between the two stations. Stations along a
-    // metro line are usually <1 km apart, so a straight line is a faithful
-    // approximation of the track for most of the network.
+    // Walk the renderedPath between the two stations' projections so the
+    // marker tracks the visible line through curves, Y-branches, and
+    // bay-skirting segments.
+    const proj = ensureProjection(lineCode);
+    if (proj) {
+      const fromDist = proj.stationDist.get(t.fromStation);
+      const toDist = proj.stationDist.get(t.toStation);
+      if (fromDist !== undefined && toDist !== undefined) {
+        const target = fromDist + (toDist - fromDist) * t.segmentProgress;
+        return pointAlongLine(proj.geom, target);
+      }
+    }
+    // Fallback for lines whose geometry never loaded: straight-line lerp.
     return [
       from.lat + (to.lat - from.lat) * t.segmentProgress,
       from.lng + (to.lng - from.lng) * t.segmentProgress,
