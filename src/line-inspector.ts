@@ -23,6 +23,11 @@ export interface LineInspector {
   selectLine(code: string | null): void;
   /** Currently selected rail line, or null. */
   current(): string | null;
+  /** When true, all rail lines are drawn even with no selection. A specific
+   *  selection still overrides this and highlights just that one line. */
+  setShowAllLines(show: boolean): void;
+  /** Toggle live train markers on/off for every known metro line. */
+  setLiveData(enabled: boolean): void;
   destroy(): void;
 }
 
@@ -32,6 +37,7 @@ export function setupLineInspector({
   onLineChange,
 }: LineInspectorOptions): LineInspector {
   let selectedLineCode: string | null = null;
+  let showAllLines = false;
   let trainGroup: L.LayerGroup | null = null;
 
   // --- Filter -------------------------------------------------------------
@@ -40,13 +46,15 @@ export function setupLineInspector({
     const linesLayer = getLinesLayer();
     if (!linesLayer) return;
 
-    stopTrainSimulation();
-
     // Stations stay visible at all times now — only the line geometry is
     // shown/hidden by selection.
     if (!code) {
       linesLayer.eachLayer((layer) => {
-        (layer as L.Path).setStyle({ opacity: 0, weight: 0 });
+        if (showAllLines) {
+          (layer as L.Path).setStyle({ opacity: 0.85, weight: 4 });
+        } else {
+          (layer as L.Path).setStyle({ opacity: 0, weight: 0 });
+        }
       });
       return;
     }
@@ -56,13 +64,14 @@ export function setupLineInspector({
       const lineCode = feature?.properties?.lineCode as string | undefined;
       if (lineCode === code) {
         (layer as L.Path).setStyle({ opacity: 0.95, weight: 6 });
+      } else if (showAllLines) {
+        (layer as L.Path).setStyle({ opacity: 0.35, weight: 3 });
       } else {
         (layer as L.Path).setStyle({ opacity: 0, weight: 0 });
       }
     });
 
     fitToLine(code);
-    if (FEATURES.liveTrainPositions) startTrainSimulation(code);
   }
 
   function fitToLine(code: string): void {
@@ -119,7 +128,9 @@ export function setupLineInspector({
     durationMs: number;
   }
 
-  const liveTrains = new Map<number, LiveTrainState>();
+  /** Keyed by `${lineCode}:${trainIdx}` so trainIdx collisions across lines
+   *  don't trample each other once we run multiple polls in parallel. */
+  const liveTrains = new Map<string, LiveTrainState>();
   /** Station lat/lng by line code, fetched once from /v1/lines?stations=1
    *  and cached for the session. */
   const stationCoords = new Map<string, Map<string, BackendStation>>();
@@ -131,44 +142,62 @@ export function setupLineInspector({
     { geom: LineGeometry; stationDist: Map<string, number> }
   >();
   let catalogPromise: Promise<void> | null = null;
-  let liveLineCode: string | null = null;
-  let pollTimer: number | undefined;
+  /** One poller per line — every active line independently fetches its own
+   *  /v1/positions feed so all metro trains can render at once. */
+  const activePollers = new Map<
+    string,
+    { timer: number; abortCtrl: AbortController | null }
+  >();
   let rafHandle: number | undefined;
-  let abortCtrl: AbortController | null = null;
+  let liveDataEnabled = false;
 
-  function startTrainSimulation(lineCode: string): void {
-    stopTrainSimulation();
-    if (!FEATURES.liveTrainPositions) return;
-    liveLineCode = lineCode;
+  function startAllLiveTrains(): void {
     if (!trainGroup) trainGroup = L.layerGroup().addTo(map);
     void ensureCatalog().then(() => {
-      if (liveLineCode !== lineCode) return;
-      void pollOnce(lineCode);
-      pollTimer = window.setInterval(() => {
-        void pollOnce(lineCode);
-      }, POLL_INTERVAL_MS);
-      rafHandle = requestAnimationFrame(tickInterpolation);
+      if (!liveDataEnabled) return;
+      for (const code of stationCoords.keys()) startLineTrains(code);
+      if (rafHandle === undefined) {
+        rafHandle = requestAnimationFrame(tickInterpolation);
+      }
     });
   }
 
-  function stopTrainSimulation(): void {
-    liveLineCode = null;
-    if (pollTimer !== undefined) {
-      clearInterval(pollTimer);
-      pollTimer = undefined;
-    }
+  function stopAllLiveTrains(): void {
+    for (const code of [...activePollers.keys()]) stopLineTrains(code);
+    liveTrains.clear();
     if (rafHandle !== undefined) {
       cancelAnimationFrame(rafHandle);
       rafHandle = undefined;
     }
-    if (abortCtrl) {
-      abortCtrl.abort();
-      abortCtrl = null;
-    }
-    liveTrains.clear();
     if (trainGroup) {
       map.removeLayer(trainGroup);
       trainGroup = null;
+    }
+  }
+
+  function startLineTrains(lineCode: string): void {
+    if (activePollers.has(lineCode)) return;
+    const entry = {
+      timer: window.setInterval(() => {
+        void pollOnce(lineCode);
+      }, POLL_INTERVAL_MS),
+      abortCtrl: null as AbortController | null,
+    };
+    activePollers.set(lineCode, entry);
+    void pollOnce(lineCode);
+  }
+
+  function stopLineTrains(lineCode: string): void {
+    const entry = activePollers.get(lineCode);
+    if (!entry) return;
+    clearInterval(entry.timer);
+    entry.abortCtrl?.abort();
+    activePollers.delete(lineCode);
+    const prefix = `${lineCode}:`;
+    for (const [key, state] of liveTrains) {
+      if (!key.startsWith(prefix)) continue;
+      trainGroup?.removeLayer(state.marker);
+      liveTrains.delete(key);
     }
   }
 
@@ -291,18 +320,19 @@ export function setupLineInspector({
   }
 
   async function pollOnce(lineCode: string): Promise<void> {
-    if (liveLineCode !== lineCode) return;
+    const entry = activePollers.get(lineCode);
+    if (!entry) return;
 
-    abortCtrl?.abort();
-    abortCtrl = new AbortController();
-    const myCtrl = abortCtrl;
+    entry.abortCtrl?.abort();
+    entry.abortCtrl = new AbortController();
+    const myCtrl = entry.abortCtrl;
 
     try {
       const url = `${LIVE_TRAINS_URL}/v1/positions/${encodeURIComponent(lineCode)}`;
       const res = await fetch(url, { signal: myCtrl.signal });
       if (!res.ok) return;
       const body = (await res.json()) as { trains?: BackendTrain[] };
-      if (liveLineCode !== lineCode) return;
+      if (!activePollers.has(lineCode)) return;
       applyTrains(lineCode, body.trains ?? []);
     } catch (err) {
       if ((err as { name?: string } | null)?.name !== "AbortError") {
@@ -315,14 +345,17 @@ export function setupLineInspector({
     if (!trainGroup) return;
     const color = colorForLine(lineCode);
     const now = performance.now();
-    const seen = new Set<number>();
+    const prefix = `${lineCode}:`;
+    const seen = new Set<string>();
 
     for (const t of trains) {
       const target = targetLatLngFor(lineCode, t);
       if (!target) continue;
       const [targetLat, targetLng] = target;
-      seen.add(t.trainIdx);
-      const existing = liveTrains.get(t.trainIdx);
+      const key = prefix + t.trainIdx;
+      seen.add(key);
+      const bearing = bearingFor(lineCode, t);
+      const existing = liveTrains.get(key);
       if (existing) {
         // Snapshot the current interpolated position as the new "from" so
         // the marker glides smoothly into the fresh target.
@@ -335,16 +368,16 @@ export function setupLineInspector({
         existing.toLng = targetLng;
         existing.startMs = now;
         existing.durationMs = POLL_INTERVAL_MS;
-        existing.marker.setIcon(createTrainIcon(color, t.direction));
+        existing.marker.setIcon(createTrainIcon(color, bearing, lineCode));
       } else {
         const marker = L.marker([targetLat, targetLng], {
-          icon: createTrainIcon(color, t.direction),
+          icon: createTrainIcon(color, bearing, lineCode),
           interactive: false,
           keyboard: false,
           zIndexOffset: 1000,
         });
         marker.addTo(trainGroup);
-        liveTrains.set(t.trainIdx, {
+        liveTrains.set(key, {
           marker,
           fromLat: targetLat,
           fromLng: targetLng,
@@ -356,11 +389,13 @@ export function setupLineInspector({
       }
     }
 
-    for (const [idx, state] of liveTrains) {
-      if (!seen.has(idx)) {
-        trainGroup.removeLayer(state.marker);
-        liveTrains.delete(idx);
-      }
+    // Despawn stale trains for THIS line only — other lines' markers must
+    // survive a poll that isn't theirs.
+    for (const [key, state] of liveTrains) {
+      if (!key.startsWith(prefix)) continue;
+      if (seen.has(key)) continue;
+      trainGroup.removeLayer(state.marker);
+      liveTrains.delete(key);
     }
   }
 
@@ -374,7 +409,7 @@ export function setupLineInspector({
 
   function tickInterpolation(): void {
     rafHandle = undefined;
-    if (liveLineCode === null) return;
+    if (!liveDataEnabled) return;
     const now = performance.now();
     for (const state of liveTrains.values()) {
       const f = interpFraction(state, now);
@@ -385,39 +420,94 @@ export function setupLineInspector({
     rafHandle = requestAnimationFrame(tickInterpolation);
   }
 
-  function createTrainIcon(color: string, direction: "ab" | "ba" | "dwell"): L.DivIcon {
-    // The leading-dot indicator gives the rider a sense of heading; for
-    // dwelling trains we centre it so the marker reads as "stopped".
-    const dotStyle =
-      direction === "ab"
-        ? "right: 2px;"
-        : direction === "ba"
-          ? "left: 2px;"
-          : "left: 50%; transform: translate(-50%, -50%);";
-    const opacity = direction === "dwell" ? 0.6 : 1;
+  /** Bearing in degrees clockwise from north for the train's current segment,
+   *  or null for dwelling trains (no heading). */
+  function bearingFor(lineCode: string, t: BackendTrain): number | null {
+    if (t.direction === "dwell" || t.fromStation === t.toStation) return null;
+    const coords = stationCoords.get(lineCode);
+    if (!coords) return null;
+    const from = coords.get(t.fromStation);
+    const to = coords.get(t.toStation);
+    if (!from || !to) return null;
+    const dy = to.lat - from.lat;
+    const dx = (to.lng - from.lng) * Math.cos((from.lat * Math.PI) / 180);
+    if (dx === 0 && dy === 0) return null;
+    return (Math.atan2(dx, dy) * 180) / Math.PI;
+  }
+
+  function createTrainIcon(
+    color: string,
+    bearingDeg: number | null,
+    lineCode: string
+  ): L.DivIcon {
+    const size = 22;
+    // Label sits above the glyph; the wrapper accounts for its height so the
+    // marker still anchors on the glyph's centre (which sits on the line).
+    const labelH = 14;
+    const totalH = size + labelH + 2;
+    const label = `<div style="
+        background: ${color};
+        color: #fff;
+        font-size: 10px;
+        font-weight: 700;
+        line-height: 1;
+        padding: 2px 5px;
+        border-radius: 4px;
+        border: 1px solid rgba(255,255,255,0.85);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.35);
+        white-space: nowrap;
+        margin-bottom: 2px;
+      ">${escapeAttr(lineCode)}</div>`;
+    const glyph =
+      bearingDeg === null
+        ? `<div style="
+            width: ${size - 6}px; height: ${size - 6}px;
+            background: ${color};
+            border: 2px solid #fff;
+            border-radius: 50%;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+            opacity: 0.7;
+          "></div>`
+        : `<div style="
+            width: ${size}px; height: ${size}px;
+            transform: rotate(${bearingDeg}deg);
+            filter: drop-shadow(0 1px 2px rgba(0,0,0,0.45));
+          ">
+            <svg viewBox="0 0 22 22" width="${size}" height="${size}"
+                 xmlns="http://www.w3.org/2000/svg" style="display:block;">
+              <path d="M11 3 L19 17 L11 13 L3 17 Z"
+                    fill="${color}"
+                    stroke="#fff" stroke-width="1.5"
+                    stroke-linejoin="round" />
+            </svg>
+          </div>`;
     return L.divIcon({
       className: "train-marker",
       html: `<div style="
-        width: 24px; height: 13px;
-        background: ${color};
-        border: 2px solid #fff;
-        border-radius: 7px;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.35);
-        opacity: ${opacity};
-        position: relative;
-      ">
-        <div style="
-          position: absolute; top: 50%;
-          ${direction === "dwell" ? "" : "transform: translateY(-50%);"}
-          width: 5px; height: 5px;
-          background: #fff;
-          border-radius: 50%;
-          ${dotStyle}
-        "></div>
-      </div>`,
-      iconSize: [24, 13],
-      iconAnchor: [12, 6],
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: max-content;
+      ">${label}${glyph}</div>`,
+      iconSize: [size, totalH],
+      // Anchor on the glyph centre, not the label, so the marker sits on the
+      // line and the label floats above it.
+      iconAnchor: [size / 2, labelH + 2 + size / 2],
     });
+  }
+
+  function escapeAttr(s: string): string {
+    return s.replace(/[&<>"']/g, (c) =>
+      c === "&"
+        ? "&amp;"
+        : c === "<"
+          ? "&lt;"
+          : c === ">"
+            ? "&gt;"
+            : c === '"'
+              ? "&quot;"
+              : "&#39;"
+    );
   }
 
   // --- Public API ---------------------------------------------------------
@@ -434,8 +524,20 @@ export function setupLineInspector({
   return {
     selectLine,
     current: () => selectedLineCode,
+    setShowAllLines(show: boolean) {
+      if (showAllLines === show) return;
+      showAllLines = show;
+      applyLineFilter(selectedLineCode);
+    },
+    setLiveData(enabled: boolean) {
+      if (!FEATURES.liveTrainPositions) return;
+      if (liveDataEnabled === enabled) return;
+      liveDataEnabled = enabled;
+      if (enabled) startAllLiveTrains();
+      else stopAllLiveTrains();
+    },
     destroy() {
-      stopTrainSimulation();
+      stopAllLiveTrains();
     },
   };
 }

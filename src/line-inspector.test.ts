@@ -173,6 +173,7 @@ describe("setupLineInspector — live trains", () => {
     }) as unknown as typeof fetch;
 
     const li = setupLineInspector({ map, getLinesLayer: () => layer });
+    li.setLiveData(true);
     li.selectLine("M2");
     // Let the catalog + first poll resolve.
     for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
@@ -200,7 +201,7 @@ describe("setupLineInspector — live trains", () => {
     }) as unknown as typeof fetch;
 
     const li = setupLineInspector({ map, getLinesLayer: () => layer });
-    li.selectLine("M2");
+    li.setLiveData(true);
     for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
     li.destroy();
   });
@@ -217,7 +218,7 @@ describe("setupLineInspector — live trains", () => {
       return Promise.resolve({ ok: true, json: async () => ({ trains: [] }) });
     }) as unknown as typeof fetch;
     const li = setupLineInspector({ map, getLinesLayer: () => layer });
-    li.selectLine("M2");
+    li.setLiveData(true);
     for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
     li.destroy();
   });
@@ -245,7 +246,7 @@ describe("setupLineInspector — live trains", () => {
       return Promise.resolve({ ok: false, status: 503, json: async () => ({}) });
     }) as unknown as typeof fetch;
     const li = setupLineInspector({ map, getLinesLayer: () => layer });
-    li.selectLine("M2");
+    li.setLiveData(true);
     for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
     li.destroy();
   });
@@ -263,7 +264,7 @@ describe("setupLineInspector — live trains", () => {
       return Promise.reject(new Error("net"));
     }) as unknown as typeof fetch;
     const li = setupLineInspector({ map, getLinesLayer: () => layer });
-    li.selectLine("M2");
+    li.setLiveData(true);
     for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
     li.destroy();
   });

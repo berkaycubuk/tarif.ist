@@ -16,7 +16,7 @@ const TILE_URL = {
 export function createMap(container: HTMLElement): L.Map {
   const map = L.map(container, {
     center: ISTANBUL_CENTER,
-    zoom: 11,
+    zoom: 12,
     minZoom: 9,
     maxBounds: ISTANBUL_BOUNDS,
     maxBoundsViscosity: 0.7,

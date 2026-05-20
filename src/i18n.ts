@@ -101,6 +101,16 @@ const dict = {
     en: "Report an issue",
   },
 
+  // --- Map controls --------------------------------------------------------
+  "controls.showMetroLines": {
+    tr: "Metro hatlarını göster",
+    en: "Show metro lines",
+  },
+  "controls.showLiveData": {
+    tr: "Canlı veriyi göster",
+    en: "Show live data",
+  },
+
   // --- Info modal -----------------------------------------------------------
   "info.open": { tr: "Bilgi", en: "Info" },
   "info.title": { tr: "Hakkında", en: "About" },

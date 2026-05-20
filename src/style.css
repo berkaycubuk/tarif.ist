@@ -35,6 +35,14 @@ html.dark .leaflet-container {
   background: #0b1220;
 }
 
+/* Suppress the browser's default focus rectangle on interactive SVG paths
+ * (rail lines, route segments) — Leaflet makes them focusable for keyboard
+ * users, but the blue outline that appears after a click looks like a stray
+ * selection box around the line's bounding box. */
+.leaflet-container .leaflet-interactive:focus {
+  outline: none;
+}
+
 /* Dark-mode overrides for the various Leaflet popups and the right-side
  * basemap controls. The light theme uses many ad-hoc inline white-on-slate
  * surfaces inside Leaflet that don't respond to Tailwind utilities, so we
@@ -132,4 +140,14 @@ html.dark .leaflet-tooltip.station-label {
 }
 .leaflet-tooltip.station-label::before {
   display: none;
+}
+
+/* The bus/tram/metro stop markers use an inline `background:#fff` circle so
+ * the colorful SVG icons sit on a readable surface. In dark mode that white
+ * dot blooms against the dark basemap — repaint it with the same slate-800
+ * surface used elsewhere. !important is required to beat the inline style. */
+html.dark .bus-stop-icon > span,
+html.dark .rail-station-icon > span {
+  background: #1e293b !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.55) !important;
 }

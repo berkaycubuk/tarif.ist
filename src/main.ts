@@ -66,6 +66,13 @@ app.innerHTML = `
          on the right via pr-14 so they don't overlap. -->
     <div id="search-root" class="pointer-events-none absolute inset-x-0 top-3 z-20 flex w-full justify-center px-4 pr-28 sm:left-1/2 sm:right-auto sm:top-5 sm:max-w-md sm:-translate-x-1/2 sm:pr-4"></div>
 
+    <!-- Map view toggles. Sits below the search on mobile and below the
+         header pill on desktop, away from the settings cog. -->
+    <div class="pointer-events-none absolute left-1/2 top-16 z-10 flex -translate-x-1/2 flex-col items-center gap-2 sm:left-6 sm:top-20 sm:translate-x-0 sm:items-start">
+      ${togglePillHTML("toggle-metro-lines", t("controls.showMetroLines"))}
+      ${togglePillHTML("toggle-live-data", t("controls.showLiveData"))}
+    </div>
+
     ${FEATURES.routePlanning ? `
     <!-- Plan panel container -->
     <section id="plan-panel-root" class="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pb-3 sm:inset-y-0 sm:right-auto sm:left-6 sm:flex sm:items-center sm:px-0 sm:pb-0" style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom));"></section>
@@ -353,7 +360,10 @@ const disruptionsPromise = loadDisruptions();
 //
 // Anything that needs the bus-aware graph or the stops layer (planRoute,
 // selectBusLine, share-route decoding) awaits busDataReady.
-const railReady = Promise.all([loadTransitData(), setupBus(map)])
+const railReady = Promise.all([
+  loadTransitData(),
+  FEATURES.bus ? setupBus(map) : Promise.resolve(null),
+])
   .then(([data, busCtrl]) => {
     // Graph is built first so addTransitLayers can use byLine's ordered
     // station sequence to emit one straight-line polyline per rail line.
@@ -366,6 +376,7 @@ const railReady = Promise.all([loadTransitData(), setupBus(map)])
     // No rail line selected by default — lines stay hidden, stations + bus
     // stops are visible (zoom-gated inside their respective layers).
     clearSelection();
+    wireMapToggles();
 
     railItems = uniqueLineCodes(linesLayer).map((code) => ({
       kind: "rail",
@@ -389,29 +400,31 @@ const railReady = Promise.all([loadTransitData(), setupBus(map)])
     throw err;
   });
 
-const busDataReady = railReady
-  .then(async (data) => {
-    const [busStopsCtrl, busSegments] = await Promise.all([
-      setupBusStopsLayer(map),
-      loadBusSegments(),
-    ]);
-    busStops = busStopsCtrl;
-    if (busSegments) {
-      // Rebuild the graph so subsequent route plans see bus edges. The
-      // planRoute closure reads `graph` lazily, so this assignment is
-      // enough — no event needed.
-      graph = buildGraph(data, busSegments);
-    }
-    console.info(
-      `transit graph: ${graph!.nodes.size} nodes · ${
-        [...graph!.edges.values()].reduce((n, arr) => n + arr.length, 0) / 2
-      } edges · ${railItems.length} rail lines · ${bus?.getIndex().length ?? 0} bus lines`
-    );
-  })
-  .catch((err) => {
-    // Bus data is degradable — rail-only routing still works without it.
-    console.warn("bus data not available; continuing rail-only", err);
-  });
+const busDataReady = !FEATURES.bus
+  ? railReady.then(() => undefined)
+  : railReady
+      .then(async (data) => {
+        const [busStopsCtrl, busSegments] = await Promise.all([
+          setupBusStopsLayer(map),
+          loadBusSegments(),
+        ]);
+        busStops = busStopsCtrl;
+        if (busSegments) {
+          // Rebuild the graph so subsequent route plans see bus edges. The
+          // planRoute closure reads `graph` lazily, so this assignment is
+          // enough — no event needed.
+          graph = buildGraph(data, busSegments);
+        }
+        console.info(
+          `transit graph: ${graph!.nodes.size} nodes · ${
+            [...graph!.edges.values()].reduce((n, arr) => n + arr.length, 0) / 2
+          } edges · ${railItems.length} rail lines · ${bus?.getIndex().length ?? 0} bus lines`
+        );
+      })
+      .catch((err) => {
+        // Bus data is degradable — rail-only routing still works without it.
+        console.warn("bus data not available; continuing rail-only", err);
+      });
 
 if (sharedRouteParams && planPanelRoot) {
   // Mount the read-only viewer once the bus-aware graph is ready, since a
@@ -454,6 +467,97 @@ async function loadBusSegments(): Promise<BusSegmentData | null> {
     console.warn("failed to load bus segments", err);
     return null;
   }
+}
+
+const SHOW_METRO_LINES_KEY = "tarif-ist:showMetroLines";
+const SHOW_LIVE_DATA_KEY = "tarif-ist:showLiveData";
+
+function loadBoolPref(key: string): boolean {
+  try {
+    return localStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveBoolPref(key: string, v: boolean): void {
+  try {
+    localStorage.setItem(key, v ? "1" : "0");
+  } catch {
+    // private mode etc — silently no-op
+  }
+}
+
+function togglePillHTML(id: string, label: string): string {
+  return `
+    <label id="${id}" class="pointer-events-auto inline-flex cursor-pointer select-none items-center gap-2 rounded-full bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-lg ring-1 ring-black/5 backdrop-blur transition hover:bg-white dark:bg-slate-800/90 dark:text-slate-200 dark:ring-white/10 dark:hover:bg-slate-700">
+      <input type="checkbox" data-input class="sr-only" />
+      <span aria-hidden="true" data-track class="relative inline-block h-4 w-7 rounded-full bg-slate-300 transition dark:bg-slate-600">
+        <span data-thumb class="absolute left-0.5 top-0.5 h-3 w-3 rounded-full bg-white shadow transition"></span>
+      </span>
+      <span>${label}</span>
+    </label>`;
+}
+
+function wireTogglePill(
+  id: string,
+  storageKey: string,
+  onChange: (on: boolean) => void
+): void {
+  const root = document.getElementById(id);
+  if (!root) return;
+  const input = root.querySelector<HTMLInputElement>("[data-input]");
+  const track = root.querySelector<HTMLElement>("[data-track]");
+  const thumb = root.querySelector<HTMLElement>("[data-thumb]");
+  if (!input || !track || !thumb) return;
+  const sync = (on: boolean): void => {
+    track.classList.toggle("bg-sky-500", on);
+    track.classList.toggle("bg-slate-300", !on);
+    track.classList.toggle("dark:bg-slate-600", !on);
+    thumb.style.transform = on ? "translateX(0.75rem)" : "";
+  };
+  const initial = loadBoolPref(storageKey);
+  input.checked = initial;
+  sync(initial);
+  onChange(initial);
+  input.addEventListener("change", () => {
+    sync(input.checked);
+    saveBoolPref(storageKey, input.checked);
+    onChange(input.checked);
+  });
+}
+
+function wireMapToggles(): void {
+  const liveDataPill = document.getElementById("toggle-live-data");
+  if (!FEATURES.liveTrainPositions) liveDataPill?.remove();
+
+  // Live data is a sub-toggle of "Show metro lines": it only makes sense to
+  // show train chevrons when the lines they ride on are visible, so we hide
+  // the pill (and stop polling) whenever metro lines are turned off.
+  const setLiveDataVisible = (visible: boolean): void => {
+    if (!liveDataPill || !FEATURES.liveTrainPositions) return;
+    liveDataPill.style.display = visible ? "" : "none";
+    if (!visible) {
+      const input = liveDataPill.querySelector<HTMLInputElement>("[data-input]");
+      if (input?.checked) {
+        input.checked = false;
+        input.dispatchEvent(new Event("change"));
+      }
+    }
+  };
+
+  // Wire live data first so the metro-lines callback (fired immediately by
+  // wireTogglePill with the persisted value) can disable it cleanly when
+  // metro lines start off, instead of running before the input exists.
+  if (FEATURES.liveTrainPositions) {
+    wireTogglePill("toggle-live-data", SHOW_LIVE_DATA_KEY, (on) => {
+      lineInspector.setLiveData(on);
+    });
+  }
+  wireTogglePill("toggle-metro-lines", SHOW_METRO_LINES_KEY, (on) => {
+    lineInspector.setShowAllLines(on);
+    setLiveDataVisible(on);
+  });
 }
 
 function lineNameFor(
