@@ -12,12 +12,12 @@ type Entry = { tr: string; en: string };
 const dict = {
   // --- Header / branding ----------------------------------------------------
   "header.subtitle": {
-    tr: "İstanbul ulaşım planlayıcı",
-    en: "Istanbul route planner",
+    tr: "İstanbul canlı ulaşım haritası",
+    en: "Istanbul live transit map",
   },
   "header.title": {
-    tr: "tarif.ist · İstanbul Ulaşım Planlayıcı",
-    en: "tarif.ist · Istanbul Route Planner",
+    tr: "tarif.ist · İstanbul Canlı Ulaşım Haritası",
+    en: "tarif.ist · Istanbul Live Transit Map",
   },
 
   // --- Search bar -----------------------------------------------------------

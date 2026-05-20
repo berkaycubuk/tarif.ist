@@ -1,28 +1,24 @@
 # tarif.ist
 
-Open-source transit directions for Istanbul. Plan a route across rail, metro,
-Marmaray, funicular, and IETT bus on one map — with walking legs routed on
-real footpaths, live service disruptions overlaid on affected lines, and
-shareable read-only links for any planned trip.
+Open-source live transit map for Istanbul. See every metro, Marmaray, tram,
+and funicular line on one map with live train positions and live service
+disruptions overlaid on affected segments. Route planning isn't here yet —
+this is a live data viewer first.
 
 🌐 **Live:** [tarif.ist](https://tarif.ist)
 
 > "Tarif" is Turkish for *directions*. The `.ist` is Istanbul.
 
-![A planned multimodal route from Kadıköy to Taksim, with the itinerary panel on the left.](docs/screenshots/planned-route.webp)
-
 ## Features
 
-- **Multimodal routing** — rail, metro, Marmaray, funicular, tram, and IETT
-  buses, with transfers between modes.
-- **Real walking legs** — first/last-mile and transfers are routed on the
-  OSM foot network (OSRM), not straight lines.
+- **Full rail network** — every metro, Marmaray, tram, and funicular line
+  and station on a single map.
+- **Live train positions** — current train locations on the selected line,
+  polled from the livepos backend.
 - **Live disruptions** — Metro İstanbul service alerts overlaid on affected
   segments.
-- **Smart search** — Photon (primary) with Nominatim fallback handles partial
-  input, typos, and Turkish diacritics.
-- **Shareable routes** — every itinerary encodes into a single URL; the
-  recipient sees the same route verbatim, no re-planning.
+- **Smart line search** — find any line by code or name, in Turkish or
+  English.
 - **Bilingual** — Turkish (default) and English.
 - **Light & dark themes** — follows system preference, user-overridable.
 

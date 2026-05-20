@@ -2,7 +2,7 @@
   "name": "tarifist",
   "version": "0.1.0",
   "private": true,
-  "description": "Open-source transit directions for Istanbul — rail, metro, and bus routing on a single map.",
+  "description": "Open-source live transit map for Istanbul — live metro train positions and service disruptions on a single map.",
   "license": "MIT",
   "author": {
     "name": "Berkay Çubuk",
@@ -19,8 +19,8 @@
   "keywords": [
     "istanbul",
     "transit",
-    "routing",
     "metro",
+    "live",
     "iett",
     "openstreetmap",
     "leaflet",
