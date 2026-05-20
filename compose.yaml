@@ -39,4 +39,4 @@ networks:
   # match `docker inspect <caddy> --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}'`.
   caddy:
     external: true
-    name: zambakpage_default
+    name: zambakpage_web
