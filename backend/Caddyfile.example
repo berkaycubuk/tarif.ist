@@ -1,0 +1,20 @@
+# Snippet to paste into your existing Caddyfile on the VPS.
+# Caddy handles TLS via Let's Encrypt automatically — just make sure
+# backend.tarif.ist has an A/AAAA record pointing at the VPS.
+
+backend.tarif.ist {
+	encode zstd gzip
+
+	# Upstream is the livepos container bound to 127.0.0.1:8080 by compose.yaml.
+	reverse_proxy 127.0.0.1:8080 {
+		health_uri     /healthz
+		health_interval 30s
+		health_timeout  5s
+	}
+
+	# Quiet down logs for the health probe itself.
+	log {
+		output file /var/log/caddy/backend.tarif.ist.log
+		format json
+	}
+}

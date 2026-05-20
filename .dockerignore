@@ -1,0 +1,26 @@
+**/.git
+**/.gitignore
+**/.DS_Store
+
+# Frontend artifacts the backend image doesn't need.
+node_modules
+dist
+dist-ssr
+coverage
+.cache
+.tmp
+*.log
+
+# Editor/IDE.
+.vscode
+.idea
+
+# Env files — never bake secrets into images.
+.env
+.env.*
+
+# Prebuilt local binary — built fresh inside the image.
+backend/livepos
+
+# Bus data isn't read by the backend; only headways.json + the two geojsons are.
+public/data/bus

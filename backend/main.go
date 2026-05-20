@@ -12,10 +12,10 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
-	dataDir := flag.String("data", "../public/data", "path to the transit data directory (must contain headways.json, lines.geojson, stations.geojson)")
-	corsOrigin := flag.String("cors", "*", "Access-Control-Allow-Origin value; empty disables the header")
-	disruptPoll := flag.Duration("disruptions-poll", 60*time.Second, "interval between background polls of the IBB disruptions API")
+	addr := flag.String("addr", envOr("ADDR", ":8080"), "listen address (env ADDR)")
+	dataDir := flag.String("data", envOr("DATA_DIR", "../public/data"), "path to the transit data directory (env DATA_DIR)")
+	corsOrigin := flag.String("cors", envOr("CORS_ORIGIN", "*"), "Access-Control-Allow-Origin value; empty disables the header (env CORS_ORIGIN)")
+	disruptPoll := flag.Duration("disruptions-poll", envDurationOr("DISRUPTIONS_POLL", 60*time.Second), "interval between background polls of the IBB disruptions API (env DISRUPTIONS_POLL)")
 	flag.Parse()
 
 	lines, err := LoadLines(*dataDir)
@@ -37,8 +37,11 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           NewServer(lines, disruptions, *corsOrigin).Handler(),
+		Handler:           withAccessLog(NewServer(lines, disruptions, *corsOrigin).Handler()),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	go func() {
@@ -56,4 +59,50 @@ func main() {
 		log.Printf("shutdown: %v", err)
 		os.Exit(1)
 	}
+}
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+func envDurationOr(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		log.Printf("invalid duration %s=%q, using default %s", key, v, def)
+		return def
+	}
+	return d
+}
+
+// withAccessLog wraps h with a single-line request logger. Capturing the
+// status code requires a small ResponseWriter shim — the stdlib's writer
+// doesn't expose what code was sent.
+func withAccessLog(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		h.ServeHTTP(rec, r)
+		log.Printf("%s %s %d %s", r.Method, r.URL.RequestURI(), rec.status, time.Since(start).Round(time.Millisecond))
+	})
+}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	if !s.wroteHeader {
+		s.status = code
+		s.wroteHeader = true
+	}
+	s.ResponseWriter.WriteHeader(code)
 }
