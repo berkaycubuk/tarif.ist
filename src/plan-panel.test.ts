@@ -2,7 +2,6 @@ import L from "leaflet";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setupPlanPanel } from "./plan-panel";
 import type { RenderedRoute } from "./route-render";
-import type { Place } from "./geocode";
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -25,10 +24,6 @@ function makeMap(): L.Map {
   Object.defineProperty(el, "clientHeight", { value: 400 });
   document.body.appendChild(el);
   return L.map(el, { center: [41, 29], zoom: 11 });
-}
-
-function fakePlace(name: string, lat: number, lng: number): Place {
-  return { id: name, name, fullName: `${name} full`, lat, lng };
 }
 
 function fakeRendered(map: L.Map, totalSec = 600): RenderedRoute {

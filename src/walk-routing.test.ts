@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getFootRoute } from "./walk-routing";
 
 const ORIGINAL_FETCH = globalThis.fetch;
