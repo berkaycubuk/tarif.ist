@@ -8,7 +8,6 @@ import type {
 } from "geojson";
 import trainIconUrl from "./assets/train.svg";
 import tramIconUrl from "./assets/tram.svg";
-import { LIVE_TRAINS_URL } from "./flags";
 import type { TransitGraph } from "./graph";
 
 export interface StationProps {
@@ -96,54 +95,19 @@ function railStationKey(lineCode: string | null, name: string): string {
 
 export { railStationKey };
 
-/**
- * Map of `lineCode` → ordered `[lng, lat]` polyline. Built from the backend's
- * /v1/lines/geometry response when available; otherwise constructed locally as
- * straight segments between ordered stations.
- */
-export type LineGeometryByCode = Map<string, Array<[number, number]>>;
-
-/**
- * Fetch the precomputed per-line polylines from the livepos backend. Returns
- * null if the backend is unreachable or the response is malformed — callers
- * should treat that as "fall back to local geometry" instead of failing.
- */
-export async function fetchLineGeometry(
-  signal?: AbortSignal
-): Promise<LineGeometryByCode | null> {
-  try {
-    const res = await fetch(`${LIVE_TRAINS_URL}/v1/lines/geometry`, { signal });
-    if (!res.ok) return null;
-    const body = (await res.json()) as Array<{
-      code: string;
-      coordinates: Array<[number, number]>;
-    }>;
-    const out: LineGeometryByCode = new Map();
-    for (const entry of body) {
-      if (!entry?.code || !Array.isArray(entry.coordinates)) continue;
-      if (entry.coordinates.length < 2) continue;
-      out.set(entry.code, entry.coordinates);
-    }
-    return out.size > 0 ? out : null;
-  } catch {
-    return null;
-  }
-}
-
 export function addTransitLayers(
   map: L.Map,
   data: TransitData,
-  graph: TransitGraph,
-  /** Backend-rendered polylines per line code. When null, we fall back to
-   *  straight segments between ordered stations. */
-  lineGeometry: LineGeometryByCode | null
+  graph: TransitGraph
 ): { lines: L.GeoJSON; stations: RailStationsLayer } {
-  // lines.geojson stores both physical tracks (and detours into spurs/depots)
-  // for many routes, so rendering it raw produces noisy parallel polylines and
-  // criss-crossing artefacts (the Seyrantepe spur on M2, the M8 twin track,
-  // etc.). The backend pre-collapses each line into one clean polyline; if
-  // that fetch failed we fall back to straight hops between ordered stations.
-  const collapsedLines = collapseLinesForRender(data, graph, lineGeometry);
+  // One straight-line polyline per line code, threaded through the stations in
+  // the order the graph has already worked out. The raw lines.geojson is a
+  // tangle of parallel tracks, depot spurs, and terminal loops — every
+  // previous attempt to follow it (Dijkstra over a vertex graph, segment
+  // stitching) leaked artefacts like the Seyrantepe stub on M2 and the
+  // Yenikapı bobble on M1. Schematic straight segments dodge that entire
+  // class of bugs.
+  const collapsedLines = collapseLinesForRender(data, graph);
   const lines = L.geoJSON(collapsedLines, {
     style: (feature) => {
       const props = feature?.properties as LineProps | undefined;
@@ -324,17 +288,15 @@ function bindStationLabel(
 }
 
 /**
- * Build one LineString feature per rail line. Prefers the backend's precomputed
- * polyline (which routes through a per-line vertex graph with Dijkstra, so it
- * avoids depot spurs and parallel-track zigzag); falls back to a straight hop
- * between ordered stations when the backend geometry is unavailable for that
- * line. The straight-line fallback is purely a degradation path — under normal
- * operation every rail line ships its full backend geometry.
+ * Build one LineString feature per rail line by connecting its stations in
+ * order with straight segments. The station sequence comes from
+ * `graph.byLine`, which already projects each station onto the line's source
+ * geometry and sorts by cumulative distance (with a 2-opt cleanup), so the
+ * ordering is reliable even on Y-shaped lines like M1A's depot stub.
  */
 function collapseLinesForRender(
   data: TransitData,
-  graph: TransitGraph,
-  lineGeometry: LineGeometryByCode | null
+  graph: TransitGraph
 ): FeatureCollection<LineString, LineProps> {
   const propsByCode = new Map<string, LineProps>();
   for (const f of data.lines.features) {
@@ -349,12 +311,7 @@ function collapseLinesForRender(
     const props = propsByCode.get(code);
     if (!props) continue;
 
-    const fromBackend = lineGeometry?.get(code);
-    const coords =
-      fromBackend && fromBackend.length >= 2
-        ? fromBackend
-        : stations.map((s) => [s.lng, s.lat] as [number, number]);
-    if (coords.length < 2) continue;
+    const coords = stations.map((s) => [s.lng, s.lat] as [number, number]);
 
     features.push({
       type: "Feature",

@@ -3,7 +3,6 @@ import L from "leaflet";
 import { createMap } from "./map";
 import {
   addTransitLayers,
-  fetchLineGeometry,
   loadTransitData,
   railStationKey,
   uniqueLineCodes,
@@ -354,21 +353,12 @@ const disruptionsPromise = loadDisruptions();
 //
 // Anything that needs the bus-aware graph or the stops layer (planRoute,
 // selectBusLine, share-route decoding) awaits busDataReady.
-const railReady = Promise.all([
-  loadTransitData(),
-  setupBus(map),
-  // Backend pre-computes a single clean polyline per line code (vertex graph +
-  // Dijkstra, see backend/render.go). Failing fast to null is fine — transit
-  // layers fall back to straight station-to-station hops in that case.
-  fetchLineGeometry(),
-])
-  .then(([data, busCtrl, lineGeometry]) => {
-    // Graph is built first because addTransitLayers uses byLine ordering to
-    // emit one polyline per rail line (the backend geometry is keyed by code,
-    // not by station sequence — we still need the graph for ordering and to
-    // skip bus routes).
+const railReady = Promise.all([loadTransitData(), setupBus(map)])
+  .then(([data, busCtrl]) => {
+    // Graph is built first so addTransitLayers can use byLine's ordered
+    // station sequence to emit one straight-line polyline per rail line.
     graph = buildGraph(data, null);
-    const layers = addTransitLayers(map, data, graph, lineGeometry);
+    const layers = addTransitLayers(map, data, graph);
     linesLayer = layers.lines;
     railStations = layers.stations;
     bus = busCtrl;
