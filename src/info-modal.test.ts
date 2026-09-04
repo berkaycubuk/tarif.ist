@@ -61,3 +61,18 @@ describe("setupInfo", () => {
     expect(document.querySelector("[role='dialog']")).toBeNull();
   });
 });
+
+describe("setupInfo — prerendered page links", () => {
+  // The generated /hat/ and /durak/ pages are only reachable from the SPA
+  // through these two links. Without them the whole batch is orphaned, which
+  // is a common reason a large set of pages never gets crawled.
+  it("links to the line and station indexes", () => {
+    setupInfo();
+    (document.getElementById("info-button") as HTMLButtonElement).click();
+    const hrefs = [
+      ...document.querySelectorAll<HTMLAnchorElement>("[role='dialog'] a"),
+    ].map((a) => a.getAttribute("href"));
+    expect(hrefs).toContain("/hat/");
+    expect(hrefs).toContain("/durak/");
+  });
+});

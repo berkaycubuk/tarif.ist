@@ -33,18 +33,22 @@
     "sync:bus": "node scripts/sync-bus-data.mjs",
     "predev": "node scripts/ensure-data.mjs",
     "prebuild": "node scripts/ensure-data.mjs",
+    "pretest": "node scripts/ensure-data.mjs",
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && npm run prerender",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prerender": "tsx scripts/prerender.ts"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.4",
     "@types/leaflet": "^1.9.21",
+    "@types/node": "^26.4.1",
     "@vitest/coverage-v8": "^4.1.7",
     "happy-dom": "^20.9.0",
     "tailwindcss": "^4.2.4",
+    "tsx": "^4.23.13",
     "typescript": "~6.0.2",
     "vite": "^8.0.10",
     "vitest": "^4.1.6"

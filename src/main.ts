@@ -261,6 +261,24 @@ interface SharedParams {
   end: { lat: number; lng: number };
 }
 
+/**
+ * Honour `?line=<code>` on boot. The backend's line-share handler
+ * (line_share_html.go) has always redirected here with this param, and the
+ * prerendered /hat/<code>/ pages link in the same way — without this the
+ * visitor lands on an empty map with nothing selected.
+ *
+ * Called once railItems is populated, so an unknown code is a no-op rather
+ * than a selection the search bar can't label.
+ */
+function selectLineFromURL(): void {
+  const code = new URLSearchParams(location.search).get("line");
+  if (!code) return;
+  const match = railItems.find(
+    (item) => item.code.toLowerCase() === code.toLowerCase()
+  );
+  if (match) selectRailLine(match.code);
+}
+
 function readSharedRouteParams(): SharedParams | null {
   const params = new URLSearchParams(location.search);
   const encoded = params.get("r");
@@ -393,6 +411,7 @@ const railReady = Promise.all([
     });
 
     searchBar.refresh();
+    selectLineFromURL();
     return data;
   })
   .catch((err) => {

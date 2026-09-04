@@ -94,6 +94,23 @@ export function setupInfo(): InfoController {
 
           <section>
             <div class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              ${t("info.browseLabel")}
+            </div>
+            <p>
+              <a href="/hat/"
+                 class="text-sky-600 underline hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300">
+                ${t("info.allLines")}
+              </a>
+              &middot;
+              <a href="/durak/"
+                 class="text-sky-600 underline hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300">
+                ${t("info.allStations")}
+              </a>
+            </p>
+          </section>
+
+          <section>
+            <div class="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
               ${t("info.mapLabel")}
             </div>
             <p>OpenStreetMap &amp; CARTO</p>
