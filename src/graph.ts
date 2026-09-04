@@ -365,6 +365,19 @@ function busNodeId(stopId: string): string {
   return `bus#${stopId}`;
 }
 
+/**
+ * Key for a bus route in `byLine`. Bus route codes and rail line codes share
+ * that map's keyspace and they *do* collide: IETT runs a bus coded "M5"
+ * (Yamanevler Metro – Horhor), which used to overwrite the M5 metro line —
+ * dropping M5 from the rendered map entirely (collapseLinesForRender skips
+ * entries whose first node isn't rail) and projecting M5 disruptions onto bus
+ * stops. Namespacing the bus side keeps rail codes reachable by their bare
+ * code, which is what disruptions and the render layer look up.
+ */
+export function busLineKey(routeCode: string): string {
+  return `bus#${routeCode}`;
+}
+
 /** Add a node for every stop *referenced by some route* and an edge for every
  *  consecutive pair in each route's stop sequence. */
 function addBusNodesAndEdges(
@@ -400,7 +413,7 @@ function addBusNodesAndEdges(
       const node = nodes.get(busNodeId(id));
       if (node) lineNodes.push(node);
     }
-    if (lineNodes.length >= 2) byLine.set(route.code, lineNodes);
+    if (lineNodes.length >= 2) byLine.set(busLineKey(route.code), lineNodes);
 
     for (let i = 1; i < route.stops.length; i++) {
       const a = nodes.get(busNodeId(route.stops[i - 1]));

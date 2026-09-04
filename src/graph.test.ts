@@ -6,7 +6,12 @@ import type {
   MultiLineString,
   Point,
 } from "geojson";
-import { buildGraph, findNodesNear, type BusSegmentData } from "./graph";
+import {
+  buildGraph,
+  busLineKey,
+  findNodesNear,
+  type BusSegmentData,
+} from "./graph";
 import type { LineProps, StationProps, TransitData } from "./transit";
 
 // --- Tiny GeoJSON builders --------------------------------------------------
@@ -281,9 +286,15 @@ describe("buildGraph — bus integration", () => {
     expect(r2.to).toBe("bus#s3");
   });
 
-  it("registers bus routes in byLine", () => {
-    expect(g.byLine.get("R1")!.map((n) => n.id)).toEqual(["bus#s1", "bus#s2"]);
-    expect(g.byLine.get("R2")!.map((n) => n.id)).toEqual(["bus#s2", "bus#s3"]);
+  it("registers bus routes in byLine under a namespaced key", () => {
+    expect(g.byLine.get(busLineKey("R1"))!.map((n) => n.id)).toEqual([
+      "bus#s1",
+      "bus#s2",
+    ]);
+    expect(g.byLine.get(busLineKey("R2"))!.map((n) => n.id)).toEqual([
+      "bus#s2",
+      "bus#s3",
+    ]);
   });
 
   it("creates asymmetric rail↔bus transfer edges (boarding-a-bus costs more)", () => {
@@ -409,5 +420,42 @@ describe("findNodesNear — spatial query", () => {
       );
       expect(indexed).toEqual(brute);
     }
+  });
+});
+
+describe("buildGraph — bus/rail line code collision", () => {
+  // IETT runs a bus route coded "M5", the same code as the Üsküdar–Çekmeköy
+  // metro line. Before bus routes were namespaced in byLine the bus won, and
+  // the M5 metro vanished from the rendered map because collapseLinesForRender
+  // skips byLine entries whose first node isn't rail.
+  const stations: StationFeature[] = [
+    station("Üsküdar", "M5", 29.015, 41.025),
+    station("Çekmeköy", "M5", 29.180, 41.035),
+  ];
+  const lines: LineFeature[] = [
+    rail("M5", [
+      [29.015, 41.025],
+      [29.180, 41.035],
+    ]),
+  ];
+  const busData: BusSegmentData = {
+    stops: {
+      b1: { lat: 41.000, lng: 29.500, name: "Yamanevler Metro" },
+      b2: { lat: 41.010, lng: 29.510, name: "Horhor" },
+    },
+    routes: [{ code: "M5", longName: "YAMANEVLER METRO - HORHOR", stops: ["b1", "b2"] }],
+  };
+
+  const g = buildGraph(transitData(stations, lines), busData);
+
+  it("keeps the rail line reachable under its bare code", () => {
+    const railNodes = g.byLine.get("M5")!;
+    expect(railNodes.map((n) => n.stationName)).toEqual(["Üsküdar", "Çekmeköy"]);
+    expect(railNodes.every((n) => n.mode === "rail")).toBe(true);
+  });
+
+  it("keeps the same-coded bus route under its own key", () => {
+    const busNodes = g.byLine.get(busLineKey("M5"))!;
+    expect(busNodes.map((n) => n.id)).toEqual(["bus#b1", "bus#b2"]);
   });
 });
