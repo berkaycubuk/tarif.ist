@@ -115,6 +115,9 @@ const dict = {
   "info.open": { tr: "Bilgi", en: "Info" },
   "info.title": { tr: "Hakkında", en: "About" },
   "info.mapLabel": { tr: "Harita", en: "Map" },
+  "info.browseLabel": { tr: "Hat ve durak rehberi", en: "Lines & stations" },
+  "info.allLines": { tr: "Tüm hatlar", en: "All lines" },
+  "info.allStations": { tr: "Tüm duraklar", en: "All stations" },
 
   // --- Settings modal -------------------------------------------------------
   "settings.open": { tr: "Ayarlar", en: "Settings" },
