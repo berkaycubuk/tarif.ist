@@ -2,7 +2,8 @@
 
 ## Where the site actually runs
 
-The frontend is served by **Cloudflare Pages**, not from the VPS.
+The frontend is a **Cloudflare Worker** (`tarifist`) serving static assets. It
+is not served from the VPS.
 
 That is worth stating explicitly because `compose.yaml` invites the opposite
 assumption. The Caddy described there fronts the Go backend only — `/og/*`,
@@ -11,30 +12,37 @@ assumption. The Caddy described there fronts the Go backend only — `/og/*`,
 
 ## What this means for the prerendered pages
 
-Cloudflare Pages resolves a directory URL to that directory's `index.html`, so
+A directory URL resolves to that directory's `index.html`, so
 `dist/hat/m2/index.html` is served at `/hat/m2/` with no configuration.
+Confirmed live: `/hat/m2/` returns the generated page, and real files take
+precedence over the SPA fallback.
 
-One thing to confirm on the first deploy: every unknown path currently returns
-**200 with the SPA shell** rather than a 404. Whatever produces that fallback
-must not shadow real files. Pages serves a matching static asset in preference
-to a `/*` splat rule, so the generated pages should win, but check that
-`/hat/m2/` returns the generated page and not the map shell before submitting
-anything to Search Console.
+Known wart, pre-dating the generated pages: an unknown path returns **200 with
+the SPA shell** rather than a 404, so `/definitely-not-a-real-page` is a soft
+404. Google can index unlimited junk URLs that way. Fixing it means setting the
+asset handler's `not_found_handling` to serve a real 404, which lives in the
+deploy config rather than in this repo.
 
 ## Deploying
 
-The Pages project is not wired to the GitHub repo — it has no deployments — so
-deploys are a direct upload from a machine holding the Cloudflare credentials:
+**Pushing to `main` deploys.** The Cloudflare GitHub App is installed on the
+repo and Workers Builds runs on every push, reporting as a "Workers Builds:
+tarifist" check run on the commit. There is no workflow file in `.github/` and
+no `wrangler` config in the repo — the build settings live in the Cloudflare
+dashboard, which is why none of this is visible from the source tree. Note that
+Workers Builds posts *check runs*, not GitHub *deployments*, so the repo's
+deployments API stays empty and the integration looks absent when it isn't.
+
+The configured build command runs `npm run build` (tsc → vite build →
+prerender). That matters: a build command of plain `vite build` would skip the
+prerender step and drop all 253 generated pages without failing the build.
+
+To deploy by hand from a machine holding Cloudflare credentials:
 
 ```sh
-npm run build          # tsc → vite build → prerender (253 static pages)
-npx wrangler pages deploy dist
+npm run build
+npx wrangler deploy
 ```
-
-`npm run build` must be what produces the deployed artifact. If the Pages
-project is ever connected to Git instead, its build command has to be
-`npm run build` (not `vite build`) or the `prerender` step is skipped and every
-generated page silently disappears.
 
 Verify after deploying:
 
